@@ -1,0 +1,174 @@
+/* Global Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background: linear-gradient(135deg, #f5f7fa, #c3cfe2);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0;  /* Remove default margin */
+    padding: 0; /* Remove default padding */
+    background-position: center center;
+    background-attachment: fixed; /* Keep the background fixed */
+    background-size: cover; /* Make sure the background covers the entire screen */
+}
+
+
+/* Header */
+.main-header2 {
+    text-align: left;  /* Align header to the left */
+    width: 100%;
+    padding-left: 30px;
+    margin-bottom: 20px; /* Adjusted margin for better spacing */
+    transform: translate(300px);
+}
+
+h1 {
+    font-size: 2rem;
+    color: #2c3e50;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+/* Wrapper for form */
+.wrapper {
+    background-color: #fff;
+    padding: 30px 40px;  /* Further reduced padding for a shorter form */
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 500px;  /* Widened the form */
+    min-height: 400px; /* Reduced the minimum height for a shorter form */
+    transform: translate(500px);
+    backdrop-filter: blur(10px); /* Add a blur effect to the form's background */
+}
+
+/* Form Styling */
+form {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Input Fields */
+input, select {
+    padding: 12px;
+    margin-bottom: 15px; /* Reduced margin for more compact spacing */
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.3s ease;
+}
+
+input:focus, select:focus {
+    border-color: #3498db;
+}
+
+input[type="password"] {
+    letter-spacing: 2px;
+}
+
+select {
+    background-color: #f7f9fc;
+}
+
+/* Button */
+button {
+    padding: 14px;
+    background-color: #0c8a15;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    text-transform: uppercase;
+}
+
+button:hover {
+    background-color: #0c8a15;
+}
+
+/* Admin Key Section */
+#admin_key_section {
+    display: none;
+    margin-top: 20px;
+}
+
+#admin_key_section input {
+    letter-spacing: 2px;
+}
+
+/* Login Link */
+p {
+    text-align: center;
+    margin-top: 20px;
+}
+
+a {
+    color: #0c8a15;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    /* On tablets and smaller screens */
+    .main-header2 {
+        transform: translateX(50px);  /* Move the header closer on smaller screens */
+    }
+
+    .wrapper {
+        margin-left: 20px;
+        padding: 30px 20px;
+        width: 90%;  /* Make form width responsive */
+        max-width: 400px; /* Allow form to shrink */
+    }
+
+    h1 {
+        font-size: 1.8rem;  /* Slightly smaller font on smaller screens */
+    }
+
+    button {
+        padding: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    /* On mobile devices */
+    .main-header2 {
+        transform: translateX(20px);  /* Adjust header position even more */
+    }
+
+    .wrapper {
+        margin-left: 10px;
+        padding: 25px 15px;
+        width: 100%;  /* Full width on very small screens */
+        max-width: 90%; /* Form fits to the screen */
+    }
+
+    h1 {
+        font-size: 1.5rem;  /* Smaller font size for mobile */
+    }
+
+    button {
+        padding: 10px;
+    }
+
+    /* Reduce the form height */
+    .wrapper {
+        min-height: 350px;
+    }
+}

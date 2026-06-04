@@ -1,0 +1,114 @@
+/* dashboard.css */
+
+body {
+    font-family: Arial, sans-serif;
+    background-image: url('/static/images/ecews_logo.png'); /* Set the logo as the background image */
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.85); /* Transparent background for the content area */
+    padding: 20px;
+    border-radius: 10px;
+    margin-top: 30px;
+}
+
+.main-header {
+    text-align: center;
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 20px;
+}
+
+h3 {
+    font-size: 20px;
+    color: #333;
+    margin-top: 20px;
+    margin-bottom: 15px;
+}
+
+.alert-info {
+    background-color: #d9edf7;
+    color: #31708f;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.form-inline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.form-inline .form-control {
+    width: auto;
+    min-width: 200px;
+}
+
+.form-inline button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 5px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.form-inline button:hover {
+    background-color: #0056b3;
+}
+
+.table {
+    width: 100%;
+    margin-top: 20px;
+    border-collapse: collapse;
+}
+
+.table th, .table td {
+    padding: 10px;
+    border: 1px solid #ddd;
+    text-align: left;
+}
+
+.table th {
+    background-color: #f8f9fa;
+    font-weight: bold;
+}
+
+.table td {
+    background-color: #fff;
+}
+
+.table td .btn {
+    padding: 5px 10px;
+    margin-top: 5px;
+}
+
+.text-danger {
+    color: #dc3545;
+}
+
+.footer {
+    text-align: center;
+    margin-top: 20px;
+}
+
+.footer a {
+    text-decoration: none;
+    background-color: #6c757d;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 5px;
+}
+
+.footer a:hover {
+    background-color: #5a6268;
+}

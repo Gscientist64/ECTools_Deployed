@@ -1,0 +1,168 @@
+/* Global Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f1f4f8;
+    color: #333;
+    line-height: 1.6;
+}
+
+/* Header */
+.admin-header {
+    background-color: #2c3e50;
+    color: #fff;
+    padding: 20px;
+    text-align: center;
+    position: relative;
+}
+
+.admin-header h1 {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.btn-logout {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    background-color: #e74c3c;
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.btn-logout:hover {
+    background-color: #c0392b;
+}
+
+/* Main Container */
+.admin-container {
+    max-width: 1200px;
+    margin: 30px auto;
+    padding: 30px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard-section h2 {
+    font-size: 2rem;
+    color: #3498db;
+    margin-bottom: 20px;
+}
+
+.dashboard-section p {
+    font-size: 1.1rem;
+    margin-bottom: 30px;
+    color: #7f8c8d;
+}
+
+/* Table Styling */
+.requests-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 30px;
+}
+
+.requests-table th, .requests-table td {
+    padding: 12px;
+    text-align: left;
+}
+
+.requests-table th {
+    background-color: #3498db;
+    color: white;
+    font-weight: bold;
+}
+
+.requests-table tr:nth-child(even) {
+    background-color: #ecf0f1;
+}
+
+.requests-table td {
+    border-bottom: 1px solid #ddd;
+}
+
+/* Buttons */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+.btn-approve {
+    background-color: #2ecc71;
+    color: white;
+}
+
+.btn-approve:hover {
+    background-color: #27ae60;
+}
+
+.btn-reject {
+    background-color: #e74c3c;
+    color: white;
+}
+
+.btn-reject:hover {
+    background-color: #c0392b;
+}
+
+/* Table Nested Structure */
+table table {
+    margin-top: 20px;
+    width: 100%;
+}
+
+table th, table td {
+    padding: 10px;
+    text-align: center;
+    border: 1px solid #ddd;
+}
+
+table th {
+    background-color: #34495e;
+    color: white;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .admin-container {
+        padding: 20px;
+    }
+
+    .requests-table th, .requests-table td {
+        padding: 10px;
+    }
+
+    .btn {
+        padding: 6px 12px;
+        font-size: 0.9rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .admin-header {
+        font-size: 1rem;
+    }
+
+    .admin-container {
+        padding: 10px;
+    }
+
+    .requests-table th, .requests-table td {
+        padding: 8px;
+    }
+}

@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+*.spec
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.env
+
+# Environment (contains secrets)
+.env
+backend/.env
+
+# PyInstaller build artifacts
+backend/build/
+backend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Flask instance
+backend/instance/
+
+# Database files (SQLite local)
+*.db
+*.sqlite3
+inventory
+inventory.backup

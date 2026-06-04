@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Request Records</title>
+    <link rel="stylesheet" href="/static/view_records.css">
+</head>
+<body class="view-records-page">
+    <header>
+        <h1>Request History</h1>
+        <a href="/dashboard" class="btn btn-back">Back to Dashboard</a>
+    </header>
+
+    <main>
+        <section class="records-section">
+            <h2>Your Previous Requests</h2>
+            <table class="records-table">
+                <thead>
+                    <tr>
+                        <th>Tool Name</th>
+                        <th>Quantity Requested</th>
+                        <th>Date Requested</th>
+                        <th>Date Approved</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for request in requests %}
+                        {% for requested_tool in request.requested_tools %}
+                            <tr>
+                                <td>{{ requested_tool.tool.name }}</td> <!-- Access tool name directly -->
+                                <td>{{ requested_tool.quantity }}</td> <!-- Access quantity -->
+                                <td>{{ request.date_requested }}</td>
+                                <td>{{ request.date_approved or "N/A" }}</td> <!-- Handle cases where date_approved is null -->
+                                <td>{{ request.status }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </main>
+</body>
+</html>

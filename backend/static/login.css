@@ -1,0 +1,370 @@
+/* Reset some basic styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Body and background */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f7fc;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-image: url('/static/images/ecews_logo.png'); /* Optional: background image */
+    opacity: 50px;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-color: rgba(243, 229, 229, 0.5);  /* Black overlay with 50% opacity */
+    background-position: center;
+}
+
+/* Header container for title */
+.header-container {
+    text-align: center;
+    margin-bottom: 30px;
+    margin-top: 5px;
+}
+
+.main-header {
+    font-size: 35px;
+    font-weight: bold;
+    color: MediumSeaGreen;
+    margin-bottom: 20px;
+    margin-top: -60px;
+    margin-left: 400px;
+}
+
+.under-header {
+    font-size: 30px;
+    margin-top: -20px;
+    margin-left: 415px;
+}
+
+.sub-header {
+font-size: 24px;
+font-weight: normal;
+color: #666;
+}
+
+/* Login container */
+.login-container {
+    background-color: rgba(255, 255, 255, 0.9); /* White with some transparency */
+    border-radius: 8px;
+    padding: 20px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+    margin-top: 50px;
+}
+
+/* Centering styles */
+.login-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    width: 100%;  
+
+}
+
+/* Heading style */
+h2 {
+    text-align: center;
+    color: #333;
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+.mt-3 {
+    margin-top: 20px;
+}
+
+/* Form elements */
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    font-size: 14px;
+    color: #333;
+    margin-bottom: 5px;
+    display: block;
+}
+
+input[type="text"],
+input[type="password"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+    border-color: #4CAF50;
+    outline: none;
+}
+
+/* Button */
+button {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    color: white;
+    background-color: #4CAF50;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+/* Error message */
+.alert {
+    color: red;
+    font-size: 14px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+/* Success message */
+.flash-message {
+    color: green;
+    font-size: 14px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+/* Link styles */
+a {
+    color: #4CAF50;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+
+/* Styling for the rest of the page */
+.container {
+    max-width: 500px;
+    float: none;
+    margin-top: 40px;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+
+}
+
+h2 {
+    text-align: center;
+}
+
+form {
+    margin-top: 20px;
+}
+
+img {
+    opacity: 0.5;
+}
+
+
+/* Reset some basic styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Body and background */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f7fc;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-image: url('/static/images/inv_1.png'); /* Optional: background image */
+    opacity: 90px;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-color: rgb(27, 133, 27);  /* Black overlay with 50% opacity */
+    background-position: center;
+}
+
+/* Header container for title */
+.header-container {
+    text-align: center;
+    margin-bottom: 30px;
+    margin-top: 5px;
+}
+
+.main-header {
+    font-size: 45px;
+    font-weight: bold;
+    color: rgb(255, 255, 255);
+    margin-bottom: 20px;
+    margin-top: 0px;
+   
+}
+
+.under-header {
+    font-size: 30px;
+    margin-top: -20px;
+    color: rgb(11, 12, 11);
+}
+
+.sub-header {
+font-size: 24px;
+font-weight: normal;
+color: #666;
+}
+
+/* Login container */
+.login-container {
+    background-color: rgba(255, 255, 255, 0.9); /* White with some transparency */
+    border-radius: 8px;
+    padding: 10px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+    margin-top: 50px;
+}
+
+.company-logo {
+    width: 150px;  /* Adjust width of logo */
+    height: auto;  /* Maintain aspect ratio */
+    margin-bottom: 5px; /* Spacing between logo and form */
+}
+
+/* Centering styles */
+.login-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    width: 100%;  
+
+}
+
+/* Heading style */
+h2 {
+    text-align: center;
+    color: #333;
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+.mt-3 {
+    margin-top: 20px;
+}
+
+/* Form elements */
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    font-size: 14px;
+    color: #333;
+    margin-bottom: 5px;
+    display: block;
+}
+
+input[type="text"],
+input[type="password"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+    border-color: #4CAF50;
+    outline: none;
+}
+
+/* Button */
+button {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    color: white;
+    background-color: #4CAF50;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+/* Error message */
+.alert {
+    color: red;
+    font-size: 14px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+/* Success message */
+.flash-message {
+    color: green;
+    font-size: 14px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+/* Link styles */
+a {
+    color: #4CAF50;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+
+/* Styling for the rest of the page */
+.container {
+    max-width: 500px;
+    float: none;
+    margin-top: 40px;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+
+}
+
+h2 {
+    text-align: center;
+}
+
+form {
+    margin-top: 20px;
+}
+
+img {
+    opacity: 0.5;
+}
+
+

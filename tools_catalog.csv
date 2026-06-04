@@ -1,0 +1,152 @@
+category_name,tool_name,description,unit,model_or_tag,is_active
+Register,Viral Load Monitoring Register,This register is used to enter viral load results and viral load suppressed results (PVLS D & PVLS N),Reg,Lab,TRUE
+Register,Enhanced Adherence Counselling Register,This register is used to enter clients who have commenced EAC and also track EAC outcome,Reg,,TRUE
+Form,Combined Pharmacy Order Form,This form is used to document ART and other drugs given to clients on their refill days,Form,Pharmacy,TRUE
+Form,Family Index Testing Form,This form is used to document Index testing from Index clients,Form,HTS,TRUE
+Form,Facility Care and Support (10-64 years),No Preview available yet,Form,Clinician,TRUE
+Card,ART Care Card,Care card for easy retrieval of patient's information,Card,Clinician,TRUE
+Card,Confidential Patient Folder,Patient folder ,Card,CM,TRUE
+Stationary,Permanent Markers,Stationary,Pcs,M&E,TRUE
+Stationary,Earser,Stationary,Pcs,M&E,TRUE
+Stationary,Pencil,Stationary,Pcs,M&E,TRUE
+Charts,Index Testing Services Chart,ICT Charts for KPI tracking,Chart,M&E,TRUE
+Charts,PMTCT Monitoring Board,PMTCT Charts for KPI tracking,Chart,M&E,TRUE
+Form,DSD validation checklist,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,Patient Folders,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Temperature charts (Refrigerator),Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Client Intake Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Biometric Slip,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,ART MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,KPI Score board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,HIV Treatment Re-engagement Follow up Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Cervical Cancer Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Index Testing MSF Addendum,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Combined ART & TPT Adherence Form,Coming Soon,Coming Soon,Coming Soon,FALSE
+Form,Advanced HIV Disease Intensive Follow Up form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,General Laboratory Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,TB MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Paediatrics Disclosure Checklist,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Infant HIV PCR (DBS) Laboratory Request/Report form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Health Facility Devolvement and Monitoring Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Adherence & ADR monitoring and Intervention form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Facility Appiontment Diary,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Driver's diagram (Small size),Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,PMTCT Attribution MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,SWOT Analysis form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Viral load Ticket,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,HIV Care and Treatment Transfer Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Maternal Cohort Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Viral Load Monitoring Board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,TPT Monitoring Board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Cervical Cancer screening form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Specimen Receipt Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Client Tracking Monitoring board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,"Combined Report, Requisition, Issue And Receipt Form -  Laboratory Reagents/Accessories",Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,GeneXpert EID POC (Weekly) Worksheet,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Pharmacy MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Facility Care and Support Checklist (65 years +),Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Facility Quality Improvement Plan (big size),Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,AHD Monitoring Board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,General ANC Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PEP Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Temperature charts (Room),Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,National ART Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Pharmaceutical care case note,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Incoming Transfer Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Facility DSD register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,GBV Service Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,PMTCT Addendum MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Index case testing service monitoring board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,PDSA Cycle (small size),Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Community DSD register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PMTCT Delivery Registter,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Informed consent form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,HEI Birth Cohort Reporting Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,Care/ART Card,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,HIV Patient Tracking Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,National Child Follow Up Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Non communicable Disease Screening & Referral Monitoring Board,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,PMTCT Transmission Of HIV services Monitoring board,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,PMTCT MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Biometric incidence Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Index Testing MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,ePNP Abstraction Tool,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,HIV Self Testing MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,EID Laboratory Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,OTZ service form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Prioritization matrix,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,AHD Diagnosis logbook,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,GBV Incidence Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Sample Transfer Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,PrEP Medical Adherence Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,OTZ INDIVIDUALIZED TREATMENT ASSESSMENT AND PLANNING,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PMTCT HTS Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Family Planning Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,HTS Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,HTS MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Outgoing Transfer Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,Bin Card,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Temperature charts (Freezer),Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,PrEP eligibility screening Checklist,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Paediatrics Initial Clinical Evaluation Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,PDSA Cycle,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Cervical Cancer screening consent form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Facility Care and Support Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,OTZ ADHERENCE ASSESSMENT AND TREATMENT PLAN,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Paediatrics Care and Support Checklist,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Index Testing Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,DBS Transportation Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Site visit reporting form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Laboratory Order and Results Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,HIV Self Testing Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,AHD Enrolment logbook,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Client Tracking & Discontinuation Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Viral load turnaround time register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,PATIENT PER REGIMEN FORM,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,INH Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,HIV Testing and PrEP Service monitoring board,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Facility Care & Support MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,PMTCT Maternal Cohort Reporting Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Request and Result Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Adult Initial Evaluation form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,HIV Care Enrolment Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,OTZ Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Cervical Cancer MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Facility Improvement plan (Small size),Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Pharmaceutical Care Daily Worksheet,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Reverse Fish Bone Analysis template,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Change Management Procedure (CMP) Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,5 WHYs Template,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Partner Notification Service Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Client Referral form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,PMTCT Report Board AID,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PrEP Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Post GBV Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Pharmaceutical care MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,HTS Monthly Summary Form Addendum,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,"Combined Report, Requisition, Issue And Receipt Form (CRRF) - Rapid Test Kits",Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Viral Load Order and Result Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,Post GBV MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,NAFDAC Pharmacovilance,Coming Soon,Coming Soon,Coming Soon,FALSE
+MSF,PrEP MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Charts,Fish Bone Analysis template (Big size),Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,General Mental Health Psycological Support Screening Tool,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PHARMACY DAILY WORKSHEET,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,Client Referral Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,DSD Assessment and Acceptance form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Client contact revalidation form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,PMTCT Spoke Site Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,PHARMARCY SERVICES CLIENTS EXIT INTERVIEW GUIDE,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Family Index Testing Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,EAC Forms,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,daily hiv testing worksheet,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,Community Pharmacy Patient Folders,Coming Soon,Coming Soon,Coming Soon,TRUE
+Register,EAC Register,Coming Soon,Coming Soon,Coming Soon,TRUE
+MSF,PMTCT Spoke Site MSF,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Monthly stock status Tracker,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,"Combined Report, Requisition, Issue And Receipt Form (CRRF) - ARVs and OI Drugs",Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Internal requisition Form,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,PrEP Care CARDS,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,Record for Transferring/Returning Commodities,Coming Soon,Coming Soon,Coming Soon,TRUE
+Card,HIV Self response/referral Card,Coming Soon,Coming Soon,Coming Soon,TRUE
+Form,HIV Adult risk stratification tool,Coming Soon,Coming Soon,Coming Soon,TRUE

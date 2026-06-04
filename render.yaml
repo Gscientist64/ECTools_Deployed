@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: ecews-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn "app:create_app()" --workers 2 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
+    preDeployCommand: |
+      bash -lc 'FLASK_APP=app:create_app python -m flask db upgrade'
+    envVars:
+      - key: PRODUCTION
+        value: "1"
+      - key: DATABASE_URL
+        # set in the UI because it's a secret; value below is just a placeholder
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        # example: Netlify + local dev
+        value: "https://your-netlify-site.netlify.app,http://localhost:5173"
+      - key: SESSION_COOKIE_SAMESITE
+        value: "None"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"

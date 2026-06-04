@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body class="dashboard-page">
+    <header>
+        <h1>Welcome {{ user.first_name }}</h1>
+        <a href="/facility_usage" class="btn btn-primary">
+            Tool Tracker
+        </a>
+        <div class="view-records-button">
+            <a href="/view_records" class="btn btn-primary"> View Records</a>
+        </div>
+        <a href="/logout" class="btn btn-logout">Logout</a>
+    </header>
+    <main>
+        <div class="dashboard-container">
+
+            <!-- Tool Categories -->
+            <section class="categories-section">
+                <h2>Tool Categories</h2>
+                <div class="categories-buttons">
+                    {% for category, tools in tools.items() %}
+                        {% if category not in ['Office Supply', 'Furniture', 'Cleaning'] %}
+                            <button class="category-btn" data-category="{{ category }}">{{ category }}</button>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </section>
+
+            <!-- Tool List -->
+            <section class="tools-section">
+                <h2>Tools</h2>
+                <p class="instruction-message">Please input the quantity you want before ticking the checkbox for each tool.</p>
+                <table class="tools-table">
+                    <thead>
+                        <tr style="background-color: green; color: white;">
+                            <th>Select</th>
+                            <th>Name</th>
+                            <th>Description</th>
+                            <th>Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tools-list">
+                        <!-- Tools will be populated dynamically based on category selection -->
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Selected Items Section -->
+            <section class="selected-items-section">
+                <h2>Selected Items</h2>
+                <form id="selected-items-form" action="/dashboard" method="POST">
+                    <ul id="selected-items-list">
+                        <!-- Selected books and tools will be dynamically added here -->
+                    </ul>
+                    <button type="submit" class="btn btn-primary">Request Selected Items</button>
+                </form>
+            </section>
+        </div>
+
+        <!-- to view records -->
+        <div class="view-records-button">
+            <a href="/view_records" class="btn btn-primary"> View Records</a>
+        </div>
+
+        
+
+        <!-- Flash message and success icon -->
+        <div id="flash-message" class="flash-message" style="display: none;">
+            <span id="flash-text">Request Submitted Successfully</span>
+            <span id="success-icon" class="success-icon">&#10004;</span> <!-- Green tick -->
+        </div>
+
+        <!-- Confirmation Modal -->
+        <div id="confirmation-modal" class="modal">
+            <div class="modal-content">
+                <p>Do you want to submit this request?</p>
+                <button id="modal-yes" class="btn btn-primary">Yes</button>
+                <button id="modal-no" class="btn btn-secondary">No</button>
+            </div>
+        </div>
+    </main>
+    
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const toolsData = {{ tools|tojson }};
+            const toolsList = document.getElementById('tools-list');
+            const categoryButtons = document.querySelectorAll('.category-btn');
+            const selectedItemsList = document.getElementById('selected-items-list');
+            const requestButton = document.querySelector('.selected-items-section button');
+            const flashMessage = document.getElementById('flash-message');
+            const confirmationModal = document.getElementById('confirmation-modal');
+            const modalYesButton = document.getElementById('modal-yes');
+            const modalNoButton = document.getElementById('modal-no');
+
+            // Populate Tools Based on Category Selection
+            categoryButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const category = button.dataset.category;
+                    toolsList.innerHTML = ''; // Clear existing tools
+                    (toolsData[category] || []).forEach(tool => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><input type="checkbox" class="tool-checkbox" data-id="${tool.id}" data-name="${tool.name}" data-description="${tool.description}"></td>
+                            <td>${tool.name}</td>
+                            <td>${tool.description}</td>
+                            <td><input type="number" class="quantity-input" data-id="${tool.id}" name="quantity_${tool.id}" min="1" value="1"></td>
+                        `;
+                        toolsList.appendChild(row);
+                    });
+                });
+            });
+
+            // Handle Tool Selection
+            toolsList.addEventListener('change', (e) => {
+                if (e.target.classList.contains('tool-checkbox')) {
+                    const checkbox = e.target;
+                    const { id, name, description } = checkbox.dataset;
+                    const quantityInput = document.querySelector(`.quantity-input[data-id="${id}"]`);
+                    const quantity = quantityInput ? quantityInput.value : 1;
+
+                    if (checkbox.checked) {
+                        const listItem = document.createElement('li');
+                        listItem.classList.add('selected-item');
+                        listItem.dataset.itemId = id;
+                        listItem.innerHTML = `
+                            <span>${name} - ${description}: Quantity ${quantity}</span>
+        
+                            <input type="hidden" name="quantity_${id}" value="${quantity}">
+                        `;
+                        selectedItemsList.appendChild(listItem);
+                    } else {
+                        const itemToRemove = document.querySelector(`.selected-item[data-item-id="${id}"]`);
+                        if (itemToRemove) selectedItemsList.removeChild(itemToRemove);
+                    }
+                }
+            });
+
+            // Handle Form Submission Confirmation
+            requestButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                const selectedItems = document.querySelectorAll('.tool-checkbox:checked');
+                if (selectedItems.length === 0) {
+                    alert('Please select at least one item to request.');
+                } else {
+                    confirmationModal.style.display = 'block';
+                }
+            });
+
+            modalYesButton.addEventListener('click', () => {
+                confirmationModal.style.display = 'none';
+                flashMessage.style.display = 'block';
+                flashMessage.style.opacity = '1';
+                setTimeout(() => {
+                    flashMessage.style.opacity = '0';
+                    setTimeout(() => {
+                        flashMessage.style.display = 'none';
+                        document.getElementById('selected-items-form').submit();
+                    }, 1000);
+                }, 5000);
+            });
+
+            modalNoButton.addEventListener('click', () => {
+                confirmationModal.style.display = 'none';
+            });
+        });
+    </script>
+</body>
+</html>

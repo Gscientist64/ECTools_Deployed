@@ -1,0 +1,123 @@
+/* General Styles */
+body.view-records-page {
+    font-family: 'Arial', sans-serif;
+    margin: 0;
+    padding: 0;
+    background: linear-gradient(120deg, #ff9a9e, #fad0c4, #fbc2eb);
+    color: #333;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    background-color: #5a9;
+    color: #fff;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+header h1 {
+    margin: 0;
+    font-size: 24px;
+}
+
+header .btn-back {
+    background-color: #fff;
+    color: #5a9;
+    text-decoration: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    font-weight: bold;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease-in-out;
+}
+
+header .btn-back:hover {
+    background-color: #f5a623;
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+/* Main Section */
+main {
+    padding: 20px;
+}
+
+.records-section {
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.records-section h2 {
+    text-align: center;
+    color: #333;
+    font-size: 22px;
+    margin-bottom: 20px;
+}
+
+/* Table Styles */
+.records-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 16px;
+}
+
+.records-table thead tr {
+    background-color: #5a9;
+    color: #fff;
+}
+
+.records-table th,
+.records-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.records-table tbody tr:hover {
+    background-color: rgba(90, 154, 144, 0.3);
+}
+
+.records-table tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.records-table td {
+    font-weight: bold;
+}
+
+.records-table .status-pending {
+    color: #ff9800;
+}
+
+.records-table .status-approved {
+    color: #4caf50;
+}
+
+.records-table .status-rejected {
+    color: #f44336;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    header h1 {
+        font-size: 18px;
+    }
+
+    header .btn-back {
+        padding: 8px 15px;
+        font-size: 14px;
+    }
+
+    .records-section {
+        padding: 15px;
+    }
+
+    .records-table {
+        font-size: 14px;
+    }
+}

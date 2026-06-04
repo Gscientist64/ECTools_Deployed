@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facility Tool Usage</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body class="dashboard-page">
+    <header>
+    <!--    <h1>Welcome {{ user.first_name }}</h1>  -->
+        <a href="/dashboard" class="btn btn-logout">Back</a>
+    </header>
+    <main>
+        <div class="dashboard-container">
+            <!-- Tool Usage Section -->
+            <section class="tools-section">
+                <h2>Facility Tool Usage</h2>
+                <table class="tools-table">
+                    <thead>
+                        <tr style="background-color: green; color: white;">
+                            <th>Tool Name</th>
+                            <th>Available Stock</th>
+                            <th>Quantity Used</th>
+                            <th>Remaining Stock</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tool in tools %}
+                        <tr>
+                            <td>{{ tool.name }}</td>
+                            <td>{{ tool.available_quantity }}</td>
+                            <td>
+                                <input type="number" class="quantity-used-input" data-id="{{ tool.id }}" name="quantity_used_{{ tool.id }}" min="0" max="{{ tool.available_quantity }}" value="0">
+                            </td>
+                            <td class="remaining-stock" id="remaining_{{ tool.id }}">{{ tool.available_quantity }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Submit Usage Form -->
+            <form id="usage-form" action="/facility_usage" method="POST">
+                <button type="submit" class="btn btn-primary">Submit Usage</button>
+            </form>
+        </div>
+
+        <script>
+            document.addEventListener("DOMContentLoaded", function() {
+                // Handle dynamic calculation of remaining stock
+                document.querySelectorAll('.quantity-used-input').forEach(input => {
+                    input.addEventListener('input', function() {
+                        const toolId = input.dataset.id;
+                        const availableQuantity = parseInt(input.getAttribute('max'));
+                        const usedQuantity = parseInt(input.value) || 0;
+                        const remainingStock = availableQuantity - usedQuantity;
+
+                        document.getElementById(`remaining_${toolId}`).textContent = remainingStock >= 0 ? remainingStock : 0;
+                    });
+                });
+            });
+        </script>
+    </main>
+</body>
+</html>

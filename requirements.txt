@@ -1,0 +1,27 @@
+# Core framework
+Flask
+Flask-SQLAlchemy
+Flask-Migrate
+Flask-Login
+Flask-Cors
+
+# Database & migrations
+SQLAlchemy
+alembic
+psycopg2-binary
+
+
+# Password hashing / security
+Werkzeug
+
+# Utilities
+python-dotenv
+six
+typing-extensions
+
+gunicorn
+
+pandas  
+xlsxwriter
+waitress
+pywebview

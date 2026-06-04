@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/static/admin_dashboard.css">
+</head>
+<body class="admin-dashboard-page">
+    <header class="admin-header">
+        <h1>Admin Dashboard</h1>
+        <a href="/logout" class="btn btn-logout">Logout</a>
+    </header>
+    
+    <main class="admin-container">
+        <!-- Pending Requests Section -->
+        <section class="dashboard-section">
+            <h2>Pending Requests</h2>
+            <p>Number of requests: {{ pending_requests | length }}</p>
+            <table class="requests-table">
+                <tbody>
+                    {% for request in pending_requests %}
+                        <h3>Request ID: {{ request.id }}</h3>
+                        <p>User: {{ request.user.first_name }}</p>
+                        <table>
+                            <tr>
+                                <th>Tool</th>
+                                <th>Quantity</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                            {% for requested_tool in request.requested_tools %}
+                            <tr>
+                                <td>{{ requested_tool.tool.name }}</td>
+                                <td>{{ requested_tool.quantity }}</td>
+                                <td>{{ requested_tool.status }}</td>
+                                <td>
+                                    {% if requested_tool.status == 'Pending' %}
+                                    <form action="{{ url_for('approve_tool', requested_tool_id=requested_tool.id) }}" method="POST" style="display:inline;">
+                                        <button type="submit" class="btn btn-approve">Approve</button>
+                                    </form>
+                                    <form action="{{ url_for('reject_tool', requested_tool_id=requested_tool.id) }}" method="POST" style="display:inline;">
+                                        <button type="submit" class="btn btn-reject">Reject</button>
+                                    </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </main>
+</body>
+</html>

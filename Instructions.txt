@@ -1,0 +1,41 @@
+1. Cd to backend
+2. activate environment = .\.venv\Scripts\activate
+
+3. To start the server = .\.venv\Scripts\python.exe -X dev app.py
+
+4. Code to add/seed more tools into the database after adding the tool to the csv file in the root folder = .\.venv\Scripts\python.exe seed.py --file ..\tools_catalog.csv
+
+5. Localhost DB URL = postgresql+pg8000://postgres:lamis@localhost/inventory
+
+admin_key is - temitope999
+admin password - Password1@ for user Gscientist64 and S.I
+root@srv947314:/var/www/ecews_toolsapp/backend
+
+6. Use this one for development in frontend/.env
+=http://localhost:5000
+
+To restart the hostinger server
+sudo nginx -t
+sudo systemctl reload nginx
+
+To restart backend
+sudo systemctl daemon-reload
+sudo systemctl restart toolsapp
+sudo systemctl status toolsapp
+
+To compile to web app - pyinstaller --clean --noconfirm ec_tools.spec
+
+
+
+Current ART Status - (pick only "Active" and "Active Restart") and Client Verification Outcome is "valid".
+
+Next Refill Period = Last Pickup Date (yyyy-mm-dd) + (Months of ARV Refill * 30 days)
+
+Great. Excellent. Now i want a new feature for the admin. The new page will be called "Tools Forecast". Its aim is to predict tools that will be needed for a facility over a particular period of time. For example, if i go to tools forecast page, i should see the tools needed by each facility for the next (period should be selected, either 1 month, 3 months, 6 months and 1 year). The tools i want to consider first is the pharmacy order form, viral load order and request form and the HTS Client Intake Form. For now, we will implement only the pharmacy order form (otghers should show coming soon if they are selected). There is a manual logic i use in calculating the expected drug refils which is 
+
+1. Current ART Status - (pick only "Active" and "Active Restart") and Client Verification Outcome is "valid".
+2. Then, Next Refill Period = Last Pickup Date (yyyy-mm-dd) + (Months of ARV Refill * 30 days)
+
+Attatched is the RADET file where this is calculated from. So radet will be uploaded first in the user interface and then this calculation will be done and then we will know the expected number of refills for each facility and the expected number of pharmacy order form booklets needed for different periods. Its only one facility that's  in this RADET file but other ones will be collated from other facilities.
+
+
