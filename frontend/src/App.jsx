@@ -18,6 +18,7 @@ import AdminDashboardScreen from './adminDashboard';
 import { TrendingUp } from 'lucide-react';
 import DeliveryNotifier from './DeliveryNotifier';
 import StockReceiptsScreen from './stockReceipts';
+import DeliveryNotesScreen from './DeliveryNotes';
 
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
@@ -61,6 +62,11 @@ function Shell() {
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      {/* Notification Icon - Top Right */}
+      <div className="fixed top-4 right-4 z-50">
+        <DeliveryNotifier />
+      </div>
+
       <div className="flex">
         <aside className="hidden lg:flex lg:w-64 flex-col gap-1 border-r border-neutral-200 dark:border-neutral-800 p-3">
           <div className="flex items-center justify-between px-1 py-2">
@@ -74,9 +80,6 @@ function Shell() {
                 </div>
                 <div className="text-xs opacity-70">
                   {me.facility || '—'}
-                </div>
-                <div className="flex items-center gap-2">
-                  <DeliveryNotifier />
                 </div>
               </div>
             </div>
@@ -106,6 +109,12 @@ function Shell() {
             label="My Inventory"
             active={tab==='myinventory'}
             onClick={()=>go('myinventory')}
+          />
+          <SidebarItem
+            icon={FileText}
+            label="Delivery Notes"
+            active={tab==='deliverynotes'}
+            onClick={()=>go('deliverynotes')}
           />
 
           {/* Admin Only Sections */}
@@ -165,6 +174,7 @@ function Shell() {
           {/* All Users Can Access */}
           {tab === 'requests'  && <RequestScreen />}
           {tab === 'myinventory' && <MyInventoryScreen />}
+          {tab === 'deliverynotes' && <DeliveryNotesScreen />}
           {tab === 'admindashboard' && (isAdmin ? <AdminDashboardScreen /> : null)}
 
           {/* Admin Only Access */}

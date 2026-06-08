@@ -1,5 +1,6 @@
 # backend/models.py
 from datetime import datetime
+from sqlalchemy import func
 from flask_login import UserMixin
 from extensions import db
 
@@ -267,10 +268,12 @@ class FacilityStock(db.Model):
     """Per-facility, per-tool stock levels"""
     __tablename__ = 'facility_stock'
 
-    id       = db.Column(db.Integer, primary_key=True)
-    tool_id  = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
-    facility = db.Column(db.String(100), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False, default=0)
+    id              = db.Column(db.Integer, primary_key=True)
+    tool_id         = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
+    facility        = db.Column(db.String(100), nullable=False)
+    quantity        = db.Column(db.Integer, nullable=False, default=0)
+    opening_balance = db.Column(db.Integer, nullable=False, default=0)
+    qty_received    = db.Column(db.Integer, nullable=False, default=0)
 
     # composite unique constraint: one row per tool per facility
     __table_args__ = (db.UniqueConstraint('tool_id', 'facility', name='uq_tool_facility'),)
@@ -283,7 +286,9 @@ class FacilityStock(db.Model):
             "tool_id": self.tool_id,
             "tool_name": self.tool.name if self.tool else None,
             "facility": self.facility,
-            "quantity": self.quantity
+            "quantity": self.quantity,
+            "opening_balance": self.opening_balance,
+            "qty_received": self.qty_received,
         }
 
 
@@ -313,8 +318,11 @@ class DepartmentDistribution(db.Model):
             "department": self.department,
             "quantity": self.quantity,
             "distributed_by": self.distributor.first_name if self.distributor else None,
+            "issued_by": self.distributor.first_name if self.distributor else None,  # alias for frontend
             "distributed_by_id": self.distributed_by,
+            "basic_unit": "unit",  # frontend compat
             "date_distributed": self.date_distributed.isoformat() if self.date_distributed else None,
+            "created_at": self.date_distributed.isoformat() if self.date_distributed else None,  # alias
             "notes": self.notes
         }
 
@@ -345,10 +353,67 @@ class PhysicalStockCount(db.Model):
             "tool_name": self.tool.name if self.tool else None,
             "system_quantity": self.system_quantity,
             "physical_quantity": self.physical_quantity,
+            "physical_count": self.physical_quantity,  # alias for frontend compat
             "discrepancy": self.discrepancy,
             "has_discrepancy": self.discrepancy != 0,
             "counted_by": self.counter.first_name if self.counter else None,
             "counted_by_id": self.counted_by,
             "counted_at": self.counted_at.isoformat() if self.counted_at else None,
+            "created_at": self.counted_at.isoformat() if self.counted_at else None,  # alias
             "notes": self.notes
         }
+
+
+# -----------------------
+# Facility-to-Facility Transfer
+# -----------------------
+
+class FacilityTransfer(db.Model):
+    __tablename__ = "facility_transfer"
+
+    id = db.Column(db.Integer, primary_key=True)
+    from_facility = db.Column(db.String(100), nullable=False)
+    to_facility = db.Column(db.String(100), nullable=False)
+    tool_id = db.Column(db.Integer, db.ForeignKey("tool.id"), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), default="pending")  # pending | accepted | rejected | cancelled
+    notes = db.Column(db.String(300), default="")
+    initiated_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    responded_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=func.now())
+    responded_at = db.Column(db.DateTime, nullable=True)
+
+    tool = db.relationship("Tool", backref="transfers", lazy=True)
+    initiator = db.relationship("Users", foreign_keys=[initiated_by], lazy=True)
+    responder = db.relationship("Users", foreign_keys=[responded_by], lazy=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "from_facility": self.from_facility,
+            "to_facility": self.to_facility,
+            "tool_id": self.tool_id,
+            "tool_name": self.tool.name if self.tool else None,
+            "quantity": self.quantity,
+            "status": self.status,
+            "notes": self.notes or "",
+            "initiated_by": self.initiator.first_name if self.initiator else None,
+            "initiated_by_id": self.initiated_by,
+            "responded_by": self.responder.first_name if self.responder else None,
+            "responded_by_id": self.responded_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "responded_at": self.responded_at.isoformat() if self.responded_at else None,
+        }
+
+
+# ---------- Notification Read Tracker ----------
+class NotificationRead(db.Model):
+    """Tracks which delivery notifications each user has marked as read"""
+    __tablename__ = 'notification_read'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    delivery_id = db.Column(db.Integer, db.ForeignKey('delivery.id'), nullable=False)
+    read_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'delivery_id', name='uq_user_delivery_read'),)

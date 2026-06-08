@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from './auth';
 import { useToast } from './toasts';
 import { Input, Button, Select } from './ui';
-import { LogIn, UserPlus } from 'lucide-react';
+import { LogIn, UserPlus, Eye, EyeOff } from 'lucide-react';
 
 // ✅ Use BASE_URL so the logo loads from /toolsapp/ecews-logo.png in production
 const LOGO_URL = `${import.meta.env.BASE_URL}ecews-logo.png`;
@@ -81,6 +81,23 @@ const ROLES = [
   { value: 'admin', label: 'Admin' },
 ];
 
+// Password strength calculator
+function calculatePasswordStrength(password) {
+  let strength = 0;
+  if (!password) return { score: 0, label: 'None', color: 'bg-neutral-200' };
+  
+  if (password.length >= 8) strength++;
+  if (password.length >= 12) strength++;
+  if (/[a-z]/.test(password)) strength++;
+  if (/[A-Z]/.test(password)) strength++;
+  if (/[0-9]/.test(password)) strength++;
+  if (/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) strength++;
+  
+  if (strength <= 2) return { score: strength, label: 'Weak', color: 'bg-red-500' };
+  if (strength <= 4) return { score: strength, label: 'Fair', color: 'bg-amber-500' };
+  return { score: strength, label: 'Strong', color: 'bg-emerald-500' };
+}
+
 export default function Login() {
   const { login, signup } = useAuth();
   const { push } = useToast();
@@ -89,11 +106,14 @@ export default function Login() {
   const [form, setForm] = useState({
     username: '',
     password: '',
+    confirm_password: '',
     first_name: '',
     email: '',
     facility: '',
     role: 'user',
-    admin_key: '', // NEW
+    admin_key: '',
+    show_password: false,
+    show_confirm_password: false,
   });
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -123,6 +143,14 @@ export default function Login() {
         push('All fields are required', 'error');
         return;
       }
+      if (form.password !== form.confirm_password) {
+        push('Passwords do not match', 'error');
+        return;
+      }
+      if (form.password.length < 8) {
+        push('Password must be at least 8 characters', 'error');
+        return;
+      }
       // If role is admin, require admin_key
       if (form.role === 'admin' && !form.admin_key) {
         push('Admin key is required for admin signup', 'error');
@@ -136,7 +164,7 @@ export default function Login() {
         password: form.password,
         facility: form.facility,
         role: form.role,
-        admin_key: form.role === 'admin' ? form.admin_key : undefined, // NEW
+        admin_key: form.role === 'admin' ? form.admin_key : undefined,
       });
       push('Account created. Please log in.', 'success');
       setTab('login');
@@ -250,7 +278,62 @@ export default function Login() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-neutral-800 mb-1">Password *</label>
-                  <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} placeholder="Create a password" />
+                  <div className="relative">
+                    <Input 
+                      type={form.show_password ? 'text' : 'password'} 
+                      value={form.password} 
+                      onChange={(e) => set('password', e.target.value)} 
+                      placeholder="Create a password" 
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => set('show_password', !form.show_password)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                    >
+                      {form.show_password ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {form.password && (
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${calculatePasswordStrength(form.password).color} transition-all`}
+                            style={{ width: `${(calculatePasswordStrength(form.password).score / 6) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-medium text-neutral-600">
+                          {calculatePasswordStrength(form.password).label}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-800 mb-1">Confirm Password *</label>
+                  <div className="relative">
+                    <Input 
+                      type={form.show_confirm_password ? 'text' : 'password'} 
+                      value={form.confirm_password} 
+                      onChange={(e) => set('confirm_password', e.target.value)} 
+                      placeholder="Confirm your password" 
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => set('show_confirm_password', !form.show_confirm_password)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                    >
+                      {form.show_confirm_password ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {form.confirm_password && form.password !== form.confirm_password && (
+                    <p className="mt-1 text-xs text-red-600">Passwords do not match</p>
+                  )}
+                  {form.confirm_password && form.password === form.confirm_password && (
+                    <p className="mt-1 text-xs text-emerald-600">Passwords match ✓</p>
+                  )}
                 </div>
                 <Button type="submit" disabled={loading} className="w-full">
                   <UserPlus className="h-4 w-4" />

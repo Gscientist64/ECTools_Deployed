@@ -357,7 +357,7 @@ export function ReportsScreen() {
                 Inventory Consumption Report
               </h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                Simple inventory stock report showing current stock levels for all tools
+                Detailed inventory report with consumption, supply, distribution, and count data for all tools
               </p>
             </div>
           </div>
@@ -368,8 +368,13 @@ export function ReportsScreen() {
                 Report Includes:
               </h4>
               <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1">
-                <li>• Current stock levels for all tools</li>
-                <li>• Export to Excel or CSV format</li>
+                <li>• Tool Name, Category, Facilities with Stock</li>
+                <li>• Opening Balance, Qty Supplied, Qty Received</li>
+                <li>• Qty Distributed, Qty from Receipts</li>
+                <li>• Current Facility Stock, Master Stock</li>
+                <li>• Total/Approved/Pending Requests</li>
+                <li>• Qty Utilized, Physical Count, Discrepancy</li>
+                <li>• Export to Excel with auto-fit columns</li>
               </ul>
             </div>
             <Button

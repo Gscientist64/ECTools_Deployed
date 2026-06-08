@@ -279,10 +279,20 @@ export const api = {
     const r = await fetch(withApi('/notifications/recent'), { credentials: 'include' });
     return asJson(r);
   },
-  
-  // Also add the missing getPendingDeliveries if not already there
-  async getPendingDeliveries() {
-    const r = await fetch(withApi('/delivery/pending-confirmations'), { credentials: 'include' });
+
+  async markNotificationRead(deliveryId) {
+    const r = await fetch(withApi(`/notifications/mark-read/${deliveryId}`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return asJson(r);
+  },
+
+  async markAllNotificationsRead() {
+    const r = await fetch(withApi('/notifications/mark-all-read'), {
+      method: 'POST',
+      credentials: 'include',
+    });
     return asJson(r);
   },
 
@@ -325,9 +335,82 @@ export const api = {
     return r.blob();
   },
 
+  // ---------- Facility-to-Facility Transfer ----------
+  async initiateTransfer(payload) {
+    const r = await fetch(withApi('/inventory/transfer/initiate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    return asJson(r);
+  },
+
+  async incomingTransfers() {
+    const r = await fetch(withApi('/inventory/transfer/incoming'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async outgoingTransfers() {
+    const r = await fetch(withApi('/inventory/transfer/outgoing'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async acceptTransfer(transferId) {
+    const r = await fetch(withApi(`/inventory/transfer/${transferId}/accept`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return asJson(r);
+  },
+
+  async rejectTransfer(transferId) {
+    const r = await fetch(withApi(`/inventory/transfer/${transferId}/reject`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return asJson(r);
+  },
+
+  async cancelTransfer(transferId) {
+    const r = await fetch(withApi(`/inventory/transfer/${transferId}/cancel`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return asJson(r);
+  },
+
+  async allTransfers() {
+    const r = await fetch(withApi('/inventory/transfer/all'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  // ---------- List Facilities (for transfer dropdown) ----------
+  async listFacilities() {
+    const r = await fetch(withApi('/admin/facilities'), { credentials: 'include' });
+    return asJson(r);
+  },
+
   // ---------- Inventory ----------
   async myStock() {
     const r = await fetch(withApi('/inventory/my-stock'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async myStockLongitudinal(period = 'week', year = null) {
+    const params = new URLSearchParams({ period });
+    if (year) params.set('year', String(year));
+    const r = await fetch(withApi(`/inventory/my-stock/longitudinal?${params}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async updateQtyReceived(toolId, qtyReceived) {
+    const r = await fetch(withApi('/inventory/my-stock/update-qty-received'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ tool_id: toolId, qty_received: qtyReceived }),
+    });
     return asJson(r);
   },
 
@@ -421,6 +504,12 @@ export const api = {
       credentials: 'include',
       body: JSON.stringify({ reason }),
     });
+    return asJson(r);
+  },
+
+  // ---------- Confirmed Delivery Notes ----------
+  async listConfirmedDeliveryNotes() {
+    const r = await fetch(withApi('/delivery/confirmed'), { credentials: 'include' });
     return asJson(r);
   },
 };

@@ -125,7 +125,11 @@ export default function DeliveryNotifier() {
   const [isConnecting, setIsConnecting] = useState(false);
   const eventSourceRef = useRef(null);
   
-  // Load recent notifications on mount
+  // Determine if current user is admin
+  const userRole = localStorage.getItem('user_role');
+  const isAdmin = userRole === 'admin';
+  
+  // Load recent notifications on mount (all users)
   useEffect(() => {
     loadRecentNotifications();
     
@@ -139,7 +143,9 @@ export default function DeliveryNotifier() {
   
   // Connect to SSE stream when admin is logged in and notifier is mounted
   useEffect(() => {
-    connectToNotificationStream();
+    if (isAdmin) {
+      connectToNotificationStream();
+    }
     
     return () => {
       if (eventSourceRef.current) {
@@ -162,10 +168,6 @@ export default function DeliveryNotifier() {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
-    
-    // Check if user is admin (you can get this from auth context)
-    const userRole = localStorage.getItem('user_role');
-    if (userRole !== 'admin') return;
     
     setIsConnecting(true);
     
@@ -244,7 +246,8 @@ export default function DeliveryNotifier() {
     setUnreadCount(count);
   };
   
-  const markAsRead = (notificationId) => {
+  const markAsRead = async (notificationId) => {
+    try { await api.markNotificationRead(notificationId); } catch {}
     setNotifications(prev => 
       prev.map(n => 
         n.id === notificationId ? { ...n, is_read: true } : n
@@ -253,7 +256,8 @@ export default function DeliveryNotifier() {
     setUnreadCount(prev => Math.max(0, prev - 1));
   };
   
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
+    try { await api.markAllNotificationsRead(); } catch {}
     setNotifications(prev => 
       prev.map(n => ({ ...n, is_read: true }))
     );

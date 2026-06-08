@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_login import login_user, logout_user, current_user, login_required
 from extensions import db
-from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine
+from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine, FacilityTransfer, NotificationRead
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func, and_, case, distinct, or_, not_
 from werkzeug.utils import secure_filename
@@ -9,6 +9,7 @@ import pandas as pd
 from io import BytesIO
 import math
 from datetime import datetime, timedelta
+from calendar import monthrange
 from io import BytesIO
 from pathlib import Path
 import os
@@ -35,7 +36,7 @@ connection_queues = {}
 import pandas as pd
 
 # Password hashing helper
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 api_bp = Blueprint("api", __name__)
 
@@ -49,6 +50,39 @@ def _looks_like_hash(s: str) -> bool:
         return False
     s = s.strip()
     return s.startswith("pbkdf2:") or s.startswith("scrypt:") or s.startswith("$2") or len(s) > 30
+
+
+def _verify_password(stored: str, password: str) -> bool:
+    """Verify password against stored hash, handling scrypt compatibility."""
+    if not stored or not password:
+        return False
+    try:
+        return check_password_hash(stored, password)
+    except ValueError:
+        # werkzeug 3.x may fail on scrypt hashes — fall back to hashlib
+        if stored.startswith("scrypt:"):
+            try:
+                import hashlib, base64
+                # Format: scrypt:N:R:P$salt$hash
+                rest = stored[len("scrypt:"):]
+                params, _, rest2 = rest.partition("$")
+                salt_b64, _, hash_b64 = rest2.partition("$")
+                N, R, P = (int(x) for x in params.split(":"))
+                salt = base64.b64decode(salt_b64)
+                expected = base64.b64decode(hash_b64)
+                result = hashlib.scrypt(
+                    password.encode("utf-8"), salt=salt,
+                    n=N, r=R, p=P, dklen=len(expected)
+                )
+                return result == expected
+            except Exception:
+                return False
+        return False
+
+
+def _hash_password(password: str) -> str:
+    """Hash password using pbkdf2 (widely compatible)."""
+    return generate_password_hash(password, method="pbkdf2:sha256")
 
 
 def _user_role(user) -> str:
@@ -207,6 +241,7 @@ def _safe_int(x, default=0):
 def create_delivery_note_pdf(delivery, tool, requester, distributor, request_obj):
     """
     Generate PDF delivery note using ReportLab.
+    Handles None values for optional parameters gracefully.
     """
     buffer = BytesIO()
     
@@ -238,6 +273,26 @@ def create_delivery_note_pdf(delivery, tool, requester, distributor, request_obj
     )
     normal_style = styles['Normal']
     
+    # Safely compute display values with fallbacks for None
+    tool_name = tool.name if tool else "Unknown Tool"
+    req_first = requester.first_name if requester else "Unknown"
+    req_other = getattr(requester, 'other_name', '') if requester else ""
+    req_facility = requester.facility if requester else "N/A"
+    req_email = requester.email if requester else "N/A"
+    dist_first = distributor.first_name if distributor else "Admin"
+    dist_other = getattr(distributor, 'other_name', '') if distributor else ""
+    dist_role = (getattr(distributor, 'role', None) or getattr(distributor, 'roles', None) or "Admin") if distributor else "Admin"
+    
+    basic_unit_raw = getattr(delivery, 'basic_unit', None)
+    basic_unit_display = "Unit"
+    if basic_unit_raw:
+        basic_unit_display = {
+            'register': 'Register',
+            'booklet': 'Booklet',
+            'pack': 'Pack',
+            'unit': 'Unit'
+        }.get(basic_unit_raw, str(basic_unit_raw).capitalize())
+    
     story = []
     
     story.append(Paragraph("DELIVERY NOTE", title_style))
@@ -248,26 +303,19 @@ def create_delivery_note_pdf(delivery, tool, requester, distributor, request_obj
     story.append(Spacer(1, 20))
     
     story.append(Paragraph("<b>DELIVER TO:</b>", heading_style))
-    story.append(Paragraph(f"{requester.first_name} {getattr(requester, 'other_name', '')}", normal_style))
-    story.append(Paragraph(f"Facility: {requester.facility or 'N/A'}", normal_style))
-    story.append(Paragraph(f"Email: {requester.email}", normal_style))
+    story.append(Paragraph(f"{req_first} {req_other}", normal_style))
+    story.append(Paragraph(f"Facility: {req_facility or 'N/A'}", normal_style))
+    story.append(Paragraph(f"Email: {req_email}", normal_style))
     story.append(Spacer(1, 20))
     
     story.append(Paragraph("<b>ITEMS SUPPLIED:</b>", heading_style))
     
     table_data = [['Tool Name', 'Basic Unit', 'Quantity Supplied']]
     
-    basic_unit_display = {
-        'register': 'Register',
-        'booklet': 'Booklet',
-        'pack': 'Pack',
-        'unit': 'Unit'
-    }.get(delivery.basic_unit, delivery.basic_unit.capitalize())
-    
     table_data.append([
-        tool.name,
+        tool_name,
         basic_unit_display,
-        str(delivery.quantity_supplied)
+        str(delivery.quantity_supplied or 0)
     ])
     
     table = Table(table_data, colWidths=[250, 100, 100])
@@ -289,17 +337,19 @@ def create_delivery_note_pdf(delivery, tool, requester, distributor, request_obj
     story.append(Paragraph("<b>DELIVERY CONFIRMATION:</b>", heading_style))
     story.append(Spacer(1, 20))
     
+    witnessed = getattr(delivery, 'witnessed_by', None) or '_________________'
+    
     sig_data = [
         ['Distributed By:', 'Received By:', 'Witnessed By:'],
         ['', '', ''],
         ['', '', ''],
         [
-            f"{distributor.first_name} {getattr(distributor, 'other_name', '')}",
-            f"{requester.first_name} {getattr(requester, 'other_name', '')}",
-            delivery.witnessed_by or '_________________'
+            f"{dist_first} {dist_other}",
+            f"{req_first} {req_other}",
+            witnessed
         ],
         [
-            f"({distributor.role or 'Admin'})",
+            f"({dist_role})",
             "(Recipient)",
             "(Witness)"
         ]
@@ -365,12 +415,7 @@ def login():
         return jsonify({"error": "Invalid credentials"}), 401
 
     stored = getattr(u, "password", "") or ""
-    ok = False
-
-    if _looks_like_hash(stored):
-        ok = check_password_hash(stored, password)
-    else:
-        ok = (stored == password)
+    ok = _verify_password(stored, password) if _looks_like_hash(stored) else (stored == password)
 
     if not ok:
         return jsonify({"error": "Invalid credentials"}), 401
@@ -412,10 +457,43 @@ def list_facilities():
 # My Inventory (Facility user)
 # -----------------------
 
+@api_bp.route("/inventory/my-stock/update-qty-received", methods=["POST"])
+@login_required
+def update_qty_received():
+    """Manually update the qty_received for a tool at the user's facility"""
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned to your account"}), 400
+
+    data = _json_body()
+    tool_id = _safe_int(data.get("tool_id"))
+    qty_received = _safe_int(data.get("qty_received"))
+
+    if not tool_id or qty_received < 0:
+        return jsonify({"error": "tool_id and qty_received are required"}), 400
+
+    stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
+    if not stock:
+        stock = FacilityStock(
+            facility=facility,
+            tool_id=tool_id,
+            quantity=0,
+            opening_balance=0,
+            qty_received=qty_received
+        )
+        db.session.add(stock)
+    else:
+        stock.qty_received = qty_received
+
+    db.session.commit()
+
+    return jsonify({"message": "Qty Received updated", "facility_stock_id": stock.id}), 200
+
+
 @api_bp.route("/inventory/my-stock", methods=["GET"])
 @login_required
 def my_facility_stock():
-    """Get current stock levels for the user's facility"""
+    """Get current stock levels for the user's facility with computed columns"""
     facility = current_user.facility
     if not facility:
         return jsonify({"error": "No facility assigned to your account"}), 400
@@ -428,11 +506,41 @@ def my_facility_stock():
     result = []
     for t in tools:
         s = stock_map.get(t.id)
+
+        # Qty Supplied: total quantity_supplied from Delivery records for this tool at this facility
+        qty_supplied = db.session.query(func.coalesce(func.sum(Delivery.quantity_supplied), 0))\
+            .filter(Delivery.tool_id == t.id)\
+            .filter(Delivery.is_delivered == True)\
+            .join(Users, Delivery.received_by == Users.id)\
+            .filter(Users.facility == facility)\
+            .scalar()
+
+        qty_supplied = int(qty_supplied or 0)
+
+        # Qty Utilized = opening_balance + total approved requests (for this tool at this facility)
+        # Approved requests for this user's facility for this tool
+        opening_bal = s.opening_balance if s else 0
+
+        approved_qty = db.session.query(func.coalesce(func.sum(RequestedTool.quantity), 0))\
+            .join(RequestModel, RequestedTool.request_id == RequestModel.id)\
+            .join(Users, RequestModel.user_id == Users.id)\
+            .filter(RequestedTool.tool_id == t.id)\
+            .filter(RequestedTool.status == 'approved')\
+            .filter(Users.facility == facility)\
+            .scalar()
+
+        approved_qty = int(approved_qty or 0)
+        qty_utilized = opening_bal + approved_qty
+
         result.append({
             "tool_id": t.id,
             "tool_name": t.name,
             "category": t.category.name if t.category else "Uncategorized",
             "quantity": s.quantity if s else 0,
+            "opening_balance": opening_bal,
+            "qty_supplied": qty_supplied,
+            "qty_received": s.qty_received if s else 0,
+            "qty_utilized": qty_utilized,
             "facility_stock_id": s.id if s else None
         })
 
@@ -545,6 +653,190 @@ def my_inventory_summary():
 
 
 # -----------------------
+# Longitudinal Stock Levels (Week / Month / Quarter)
+# -----------------------
+
+@api_bp.route("/inventory/my-stock/longitudinal", methods=["GET"])
+@login_required
+def my_stock_longitudinal():
+    """Return longitudinal stock data grouped by week/month/quarter with
+    rolling opening/closing balances per tool at the user's facility."""
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned to your account"}), 400
+
+    period = (request.args.get("period") or "week").strip().lower()
+    if period not in ("week", "month", "quarter"):
+        return jsonify({"error": "period must be week, month, or quarter"}), 400
+
+    year_str = request.args.get("year")
+    try:
+        year = int(year_str) if year_str else datetime.utcnow().year
+    except ValueError:
+        return jsonify({"error": "Invalid year"}), 400
+
+    # --- helper: determine period label and range for a given date ---
+    def period_key(dt: datetime):
+        """Return (sort_key, label, period_start, period_end) for a given datetime."""
+        if period == "week":
+            iso = dt.isocalendar()
+            wk = iso[1]
+            yr = iso[0]
+            # Monday of that ISO week
+            jan4 = datetime(yr, 1, 4)
+            start_of_week1 = jan4 - timedelta(days=jan4.isocalendar()[2] - 1)
+            period_start = start_of_week1 + timedelta(weeks=wk - 1)
+            period_end = period_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+            label = f"{yr}-W{wk:02d}"
+            sort_key = f"{yr}{wk:02d}"
+        elif period == "month":
+            yr = dt.year
+            mo = dt.month
+            period_start = datetime(yr, mo, 1)
+            last_day = monthrange(yr, mo)[1]
+            period_end = datetime(yr, mo, last_day, 23, 59, 59)
+            label = f"{yr}-{mo:02d}"
+            sort_key = f"{yr}{mo:02d}"
+        else:  # quarter
+            yr = dt.year
+            q = (dt.month - 1) // 3 + 1
+            q_start_month = (q - 1) * 3 + 1
+            q_end_month = q * 3
+            period_start = datetime(yr, q_start_month, 1)
+            last_day = monthrange(yr, q_end_month)[1]
+            period_end = datetime(yr, q_end_month, last_day, 23, 59, 59)
+            label = f"{yr}-Q{q}"
+            sort_key = f"{yr}{q:02d}"
+        return sort_key, label, period_start, period_end
+
+    # --- collect all events (supplies + utilization) ---
+    # 1. Department distributions (utilization)
+    distributions = (
+        DepartmentDistribution.query
+        .filter_by(facility=facility)
+        .filter(DepartmentDistribution.date_distributed >= datetime(year, 1, 1))
+        .filter(DepartmentDistribution.date_distributed < datetime(year + 1, 1, 1))
+        .all()
+    )
+
+    # 2. Deliveries (supplies via approved requests)
+    deliveries = (
+        Delivery.query
+        .filter(Delivery.is_delivered == True)
+        .filter(Delivery.delivery_date >= datetime(year, 1, 1))
+        .filter(Delivery.delivery_date < datetime(year + 1, 1, 1))
+        .join(Users, Delivery.received_by == Users.id)
+        .filter(Users.facility == facility)
+        .all()
+    )
+
+    # 3. Stock receipts (supplies from suppliers) — filter by facility
+    receipt_lines = (
+        db.session.query(StockReceiptLine, StockReceipt)
+        .join(StockReceipt, StockReceiptLine.receipt_id == StockReceipt.id)
+        .join(Users, StockReceipt.received_by == Users.id)
+        .filter(Users.facility == facility)
+        .filter(StockReceipt.date_supplied >= datetime(year, 1, 1))
+        .filter(StockReceipt.date_supplied < datetime(year + 1, 1, 1))
+        .all()
+    )
+
+    # --- Build per-tool per-period aggregations ---
+    # Structure: { tool_id: { period_sort_key: { opening, supplied, utilized } } }
+    tool_periods = {}
+
+    # Initialize from FacilityStock opening_balance
+    stocks = FacilityStock.query.filter_by(facility=facility).all()
+    stock_map = {s.tool_id: s for s in stocks}
+
+    # Get all tools to ensure we show all of them
+    tools = Tool.query.order_by(Tool.name.asc()).all()
+
+    # Process distributions (utilization)
+    for d in distributions:
+        if not d.date_distributed:
+            continue
+        sk, label, p_start, p_end = period_key(d.date_distributed)
+        tp = tool_periods.setdefault(d.tool_id, {})
+        entry = tp.setdefault(sk, {"label": label, "period_start": p_start.isoformat(), "period_end": p_end.isoformat(), "supplied": 0, "utilized": 0})
+        entry["utilized"] += d.quantity
+
+    # Process deliveries (supplied)
+    for d in deliveries:
+        if not d.delivery_date:
+            continue
+        sk, label, p_start, p_end = period_key(d.delivery_date)
+        tp = tool_periods.setdefault(d.tool_id, {})
+        entry = tp.setdefault(sk, {"label": label, "period_start": p_start.isoformat(), "period_end": p_end.isoformat(), "supplied": 0, "utilized": 0})
+        entry["supplied"] += d.quantity_supplied or 0
+
+    # Process stock receipts (supplied)
+    for line, receipt in receipt_lines:
+        if not receipt.date_supplied:
+            continue
+        sk, label, p_start, p_end = period_key(receipt.date_supplied)
+        tp = tool_periods.setdefault(line.tool_id, {})
+        entry = tp.setdefault(sk, {"label": label, "period_start": p_start.isoformat(), "period_end": p_end.isoformat(), "supplied": 0, "utilized": 0})
+        entry["supplied"] += line.quantity_received or 0
+
+    # --- Build result with rolling balances ---
+    result_tools = []
+    for t in tools:
+        s = stock_map.get(t.id)
+        initial_opening = s.opening_balance if s else 0
+
+        periods_dict = tool_periods.get(t.id, {})
+        if not periods_dict:
+            # No activity for this tool in this year
+            if initial_opening == 0:
+                continue  # skip tools with no activity and no opening balance
+            # Still include if there's an opening balance
+            result_tools.append({
+                "tool_id": t.id,
+                "tool_name": t.name,
+                "category": t.category.name if t.category else "Uncategorized",
+                "initial_opening": initial_opening,
+                "periods": []
+            })
+            continue
+
+        sorted_keys = sorted(periods_dict.keys())
+        running_balance = initial_opening
+        periods_list = []
+        for sk in sorted_keys:
+            entry = periods_dict[sk]
+            opening = running_balance
+            supplied = entry["supplied"]
+            utilized = entry["utilized"]
+            closing = opening + supplied - utilized
+            periods_list.append({
+                "label": entry["label"],
+                "period_start": entry["period_start"],
+                "period_end": entry["period_end"],
+                "opening_balance": opening,
+                "qty_supplied": supplied,
+                "qty_utilized": utilized,
+                "closing_balance": closing
+            })
+            running_balance = closing
+
+        result_tools.append({
+            "tool_id": t.id,
+            "tool_name": t.name,
+            "category": t.category.name if t.category else "Uncategorized",
+            "initial_opening": initial_opening,
+            "periods": periods_list
+        })
+
+    return jsonify({
+        "facility": facility,
+        "period_type": period,
+        "year": year,
+        "tools": result_tools
+    }), 200
+
+
+# -----------------------
 # Physical Stock Count
 # -----------------------
 
@@ -566,9 +858,37 @@ def record_physical_count():
     if physical_quantity < 0:
         return jsonify({"error": "physical_quantity cannot be negative"}), 400
 
-    # Get system quantity from facility stock
+    # Compute true system quantity from all stock movements
     stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
-    system_quantity = stock.quantity if stock else 0
+    opening = (stock.opening_balance + stock.qty_received) if stock else 0
+
+    # Supplies from confirmed deliveries
+    delivered = int(db.session.query(func.coalesce(func.sum(Delivery.quantity_supplied), 0))
+        .filter(Delivery.tool_id == tool_id, Delivery.is_delivered == True)
+        .join(Users, Delivery.received_by == Users.id)
+        .filter(Users.facility == facility).scalar() or 0)
+
+    # Supplies from stock receipts
+    received = int(db.session.query(func.coalesce(func.sum(StockReceiptLine.quantity_received), 0))
+        .join(StockReceipt, StockReceiptLine.receipt_id == StockReceipt.id)
+        .join(Users, StockReceipt.received_by == Users.id)
+        .filter(Users.facility == facility, StockReceiptLine.tool_id == tool_id).scalar() or 0)
+
+    # Incoming accepted transfers
+    transfers_in = int(db.session.query(func.coalesce(func.sum(FacilityTransfer.quantity), 0))
+        .filter(FacilityTransfer.to_facility == facility, FacilityTransfer.tool_id == tool_id,
+                FacilityTransfer.status == 'accepted').scalar() or 0)
+
+    # Department distributions (outgoing)
+    distributed = int(db.session.query(func.coalesce(func.sum(DepartmentDistribution.quantity), 0))
+        .filter(DepartmentDistribution.facility == facility, DepartmentDistribution.tool_id == tool_id).scalar() or 0)
+
+    # Outgoing transfers (pending + accepted)
+    transfers_out = int(db.session.query(func.coalesce(func.sum(FacilityTransfer.quantity), 0))
+        .filter(FacilityTransfer.from_facility == facility, FacilityTransfer.tool_id == tool_id,
+                FacilityTransfer.status.in_(['pending', 'accepted'])).scalar() or 0)
+
+    system_quantity = opening + delivered + received + transfers_in - distributed - transfers_out
     discrepancy = physical_quantity - system_quantity
 
     pc = PhysicalStockCount(
@@ -602,6 +922,207 @@ def list_physical_counts():
         .all()
     )
     return jsonify([c.to_dict() for c in counts]), 200
+
+
+# -----------------------
+# Facility-to-Facility Transfer
+# -----------------------
+
+@api_bp.route("/inventory/transfer/initiate", methods=["POST"])
+@login_required
+def initiate_transfer():
+    """Initiate a facility-to-facility transfer (sender starts it)."""
+    data = _json_body()
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned to your account"}), 400
+
+    to_facility = (data.get("to_facility") or "").strip()
+    tool_name = (data.get("tool_name") or "").strip()
+    quantity = _safe_int(data.get("quantity"))
+    notes = (data.get("notes") or "").strip()
+
+    if not to_facility or not tool_name or quantity <= 0:
+        return jsonify({"error": "to_facility, tool_name, and quantity are required"}), 400
+
+    if to_facility.lower() == facility.lower():
+        return jsonify({"error": "Cannot transfer to the same facility"}), 400
+
+    # Find tool by name
+    tool = Tool.query.filter(func.lower(Tool.name) == tool_name.lower()).first()
+    if not tool:
+        return jsonify({"error": f"Tool '{tool_name}' not found"}), 404
+
+    # Check sender has sufficient stock
+    stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool.id).first()
+    available = stock.quantity if stock else 0
+    if available < quantity:
+        return jsonify({"error": f"Insufficient stock. Available at {facility}: {available}, requested: {quantity}"}), 400
+
+    # Create the transfer record (status: pending) & deduct from sender immediately
+    stock.quantity -= quantity
+    transfer = FacilityTransfer(
+        from_facility=facility,
+        to_facility=to_facility,
+        tool_id=tool.id,
+        quantity=quantity,
+        status="pending",
+        notes=notes,
+        initiated_by=current_user.id
+    )
+    db.session.add(transfer)
+    db.session.commit()
+
+    return jsonify(transfer.to_dict()), 201
+
+
+@api_bp.route("/inventory/transfer/incoming", methods=["GET"])
+@login_required
+def list_incoming_transfers():
+    """List pending transfers TO the user's facility (for receiving facility to see)."""
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+
+    transfers = (
+        FacilityTransfer.query
+        .filter_by(to_facility=facility)
+        .order_by(FacilityTransfer.created_at.desc())
+        .all()
+    )
+    return jsonify([t.to_dict() for t in transfers]), 200
+
+
+@api_bp.route("/inventory/transfer/outgoing", methods=["GET"])
+@login_required
+def list_outgoing_transfers():
+    """List transfers FROM the user's facility."""
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+
+    transfers = (
+        FacilityTransfer.query
+        .filter_by(from_facility=facility)
+        .order_by(FacilityTransfer.created_at.desc())
+        .all()
+    )
+    return jsonify([t.to_dict() for t in transfers]), 200
+
+
+@api_bp.route("/inventory/transfer/<int:transfer_id>/accept", methods=["POST"])
+@login_required
+def accept_transfer(transfer_id):
+    """Accept a pending transfer - adds stock to receiving facility (already deducted from sender at initiation)."""
+    transfer = FacilityTransfer.query.get_or_404(transfer_id)
+    facility = current_user.facility
+
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+    if transfer.to_facility.lower() != facility.lower():
+        return jsonify({"error": "This transfer is not addressed to your facility"}), 403
+    if transfer.status != "pending":
+        return jsonify({"error": f"Cannot accept transfer with status '{transfer.status}'"}), 400
+
+    # Add to receiver's stock (upsert) — sender was already deducted at initiation
+    receiver_stock = FacilityStock.query.filter_by(facility=transfer.to_facility, tool_id=transfer.tool_id).first()
+    if receiver_stock:
+        receiver_stock.quantity += transfer.quantity
+    else:
+        receiver_stock = FacilityStock(
+            facility=transfer.to_facility,
+            tool_id=transfer.tool_id,
+            quantity=transfer.quantity
+        )
+        db.session.add(receiver_stock)
+
+    transfer.status = "accepted"
+    transfer.responded_by = current_user.id
+    transfer.responded_at = datetime.utcnow()
+
+    db.session.commit()
+    return jsonify(transfer.to_dict()), 200
+
+
+@api_bp.route("/inventory/transfer/<int:transfer_id>/reject", methods=["POST"])
+@login_required
+def reject_transfer(transfer_id):
+    """Reject a pending transfer — returns stock to sender."""
+    transfer = FacilityTransfer.query.get_or_404(transfer_id)
+    facility = current_user.facility
+
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+    if transfer.to_facility.lower() != facility.lower():
+        return jsonify({"error": "This transfer is not addressed to your facility"}), 403
+    if transfer.status != "pending":
+        return jsonify({"error": f"Cannot reject transfer with status '{transfer.status}'"}), 400
+
+    # Return stock to sender
+    sender_stock = FacilityStock.query.filter_by(facility=transfer.from_facility, tool_id=transfer.tool_id).first()
+    if sender_stock:
+        sender_stock.quantity += transfer.quantity
+    else:
+        sender_stock = FacilityStock(
+            facility=transfer.from_facility,
+            tool_id=transfer.tool_id,
+            quantity=transfer.quantity
+        )
+        db.session.add(sender_stock)
+
+    transfer.status = "rejected"
+    transfer.responded_by = current_user.id
+    transfer.responded_at = datetime.utcnow()
+
+    db.session.commit()
+    return jsonify(transfer.to_dict()), 200
+
+
+@api_bp.route("/inventory/transfer/<int:transfer_id>/cancel", methods=["POST"])
+@login_required
+def cancel_transfer(transfer_id):
+    """Cancel a pending transfer (sender withdraws it)."""
+    transfer = FacilityTransfer.query.get_or_404(transfer_id)
+    facility = current_user.facility
+
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+    if transfer.from_facility.lower() != facility.lower():
+        return jsonify({"error": "You can only cancel transfers you initiated"}), 403
+    if transfer.status != "pending":
+        return jsonify({"error": f"Cannot cancel transfer with status '{transfer.status}'"}), 400
+
+    # Return stock to sender
+    sender_stock = FacilityStock.query.filter_by(facility=transfer.from_facility, tool_id=transfer.tool_id).first()
+    if sender_stock:
+        sender_stock.quantity += transfer.quantity
+    else:
+        sender_stock = FacilityStock(
+            facility=transfer.from_facility,
+            tool_id=transfer.tool_id,
+            quantity=transfer.quantity
+        )
+        db.session.add(sender_stock)
+
+    transfer.status = "cancelled"
+    db.session.commit()
+    return jsonify(transfer.to_dict()), 200
+
+
+@api_bp.route("/inventory/transfer/all", methods=["GET"])
+@login_required
+def admin_list_all_transfers():
+    """Admin: list all facility transfers across all facilities."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    transfers = (
+        FacilityTransfer.query
+        .order_by(FacilityTransfer.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return jsonify([t.to_dict() for t in transfers]), 200
 
 
 # -----------------------
@@ -696,7 +1217,8 @@ def admin_facility_stock(facility_name):
 @api_bp.route("/admin/facility/<path:facility_name>/physical-counts", methods=["GET"])
 @login_required
 def admin_facility_physical_counts(facility_name):
-    """Admin: view physical stock count history for a facility"""
+    """Admin: view physical stock count history for a facility.
+    System quantity shown is the state-wide stock (all facilities combined)."""
     if not _is_admin_user(current_user):
         return _admin_required_json()
 
@@ -706,7 +1228,39 @@ def admin_facility_physical_counts(facility_name):
         .order_by(PhysicalStockCount.counted_at.desc())
         .all()
     )
-    return jsonify([c.to_dict() for c in counts]), 200
+
+    result = []
+    for c in counts:
+        # Compute state-wide system quantity for this tool
+        all_stocks = FacilityStock.query.filter_by(tool_id=c.tool_id).all()
+        opening = sum((s.opening_balance + s.qty_received) for s in all_stocks)
+
+        delivered = int(db.session.query(func.coalesce(func.sum(Delivery.quantity_supplied), 0))
+            .filter(Delivery.tool_id == c.tool_id, Delivery.is_delivered == True).scalar() or 0)
+
+        received = int(db.session.query(func.coalesce(func.sum(StockReceiptLine.quantity_received), 0))
+            .filter(StockReceiptLine.tool_id == c.tool_id).scalar() or 0)
+
+        transfers_in = int(db.session.query(func.coalesce(func.sum(FacilityTransfer.quantity), 0))
+            .filter(FacilityTransfer.tool_id == c.tool_id,
+                    FacilityTransfer.status == 'accepted').scalar() or 0)
+
+        distributed = int(db.session.query(func.coalesce(func.sum(DepartmentDistribution.quantity), 0))
+            .filter(DepartmentDistribution.tool_id == c.tool_id).scalar() or 0)
+
+        transfers_out = int(db.session.query(func.coalesce(func.sum(FacilityTransfer.quantity), 0))
+            .filter(FacilityTransfer.tool_id == c.tool_id,
+                    FacilityTransfer.status.in_(['pending', 'accepted'])).scalar() or 0)
+
+        state_quantity = opening + delivered + received + transfers_in - distributed - transfers_out
+
+        d = c.to_dict()
+        d["system_quantity"] = state_quantity
+        d["discrepancy"] = c.physical_quantity - state_quantity
+        d["has_discrepancy"] = (c.physical_quantity - state_quantity) != 0
+        result.append(d)
+
+    return jsonify(result), 200
 
 
 
@@ -748,10 +1302,11 @@ def signup():
 
     u = Users(email=email, username=username, first_name=first_name, facility=facility)
 
+    # Always hash password with pbkdf2 for compatibility
     if hasattr(u, "set_password"):
         u.set_password(password)
     else:
-        u.password = password
+        u.password = _hash_password(password)
 
     if hasattr(u, "role"):
         u.role = final_role
@@ -1646,62 +2201,105 @@ def confirm_delivery(requested_tool_id):
 @login_required
 def get_recent_notifications():
     """Get recent notifications for the last 7 days"""
-    if not _is_admin_user(current_user):
-        return _admin_required_json()
+    is_admin = _is_admin_user(current_user)
     
     # Query recent deliveries from last 7 days
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
     
-    recent_deliveries = db.session.query(
+    query = db.session.query(
         Delivery,
         Tool,
         Users
-    ).join(
+    ).outerjoin(
         Tool, Delivery.tool_id == Tool.id
-    ).join(
+    ).outerjoin(
         Users, Delivery.received_by == Users.id
     ).filter(
         Delivery.delivery_confirmed_at >= seven_days_ago,
         Delivery.is_delivered == True
-    ).order_by(
+    )
+    
+    # For non-admin users, only show their own delivery notifications
+    if not is_admin:
+        query = query.filter(Delivery.received_by == current_user.id)
+    
+    recent_deliveries = query.order_by(
         Delivery.delivery_confirmed_at.desc()
     ).limit(50).all()
     
     notifications = []
+    # Get all delivery IDs that current user has marked as read
+    read_ids = set(
+        r[0] for r in db.session.query(NotificationRead.delivery_id)
+        .filter(NotificationRead.user_id == current_user.id).all()
+    )
     for delivery, tool, user in recent_deliveries:
+        tool_name = tool.name if tool else "Unknown Tool"
+        user_name = user.first_name or user.username if user else "Unknown"
+        user_facility = user.facility if user else "Unknown"
+        
         notifications.append({
+            "id": delivery.id,
             "type": "delivery_confirmed",
             "title": "📦 Delivery Confirmed",
-            "message": f"{user.first_name or user.username} from {user.facility or 'Unknown'} confirmed receipt of {delivery.quantity_supplied} x {tool.name}",
+            "message": f"{user_name} from {user_facility} confirmed receipt of {delivery.quantity_supplied} x {tool_name}",
             "request_id": delivery.request_id,
             "delivery_id": delivery.id,
-            "tool_name": tool.name,
+            "tool_name": tool_name,
             "quantity": delivery.quantity_supplied,
-            "facility": user.facility,
-            "requester": user.first_name or user.username,
-            "timestamp": delivery.delivery_confirmed_at.isoformat(),
-            "is_read": False  # You can add a read status table if needed
+            "facility": user_facility,
+            "requester": user_name,
+            "timestamp": delivery.delivery_confirmed_at.isoformat() if delivery.delivery_confirmed_at else None,
+            "is_read": delivery.id in read_ids
         })
     
     return jsonify(notifications), 200
 
-@api_bp.route("/delivery/generate-note/<int:delivery_id>", methods=["POST"])
+
+@api_bp.route("/notifications/mark-read/<int:delivery_id>", methods=["POST"])
 @login_required
-def generate_delivery_note(delivery_id):
-    """Generate PDF delivery note for confirmed delivery."""
+def mark_notification_read(delivery_id):
+    """Mark a single notification as read"""
+    existing = NotificationRead.query.filter_by(user_id=current_user.id, delivery_id=delivery_id).first()
+    if not existing:
+        nr = NotificationRead(user_id=current_user.id, delivery_id=delivery_id)
+        db.session.add(nr)
+        db.session.commit()
+    return jsonify({"status": "ok"}), 200
+
+
+@api_bp.route("/notifications/mark-all-read", methods=["POST"])
+@login_required
+def mark_all_notifications_read():
+    """Mark all recent notifications as read for the current user"""
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    # Get all delivery IDs that would appear in notifications
+    deliveries = db.session.query(Delivery.id).filter(
+        Delivery.delivery_confirmed_at >= seven_days_ago,
+        Delivery.is_delivered == True
+    )
+    if not _is_admin_user(current_user):
+        deliveries = deliveries.filter(Delivery.received_by == current_user.id)
+    
+    for (did,) in deliveries.all():
+        existing = NotificationRead.query.filter_by(user_id=current_user.id, delivery_id=did).first()
+        if not existing:
+            nr = NotificationRead(user_id=current_user.id, delivery_id=did)
+            db.session.add(nr)
+    db.session.commit()
+    return jsonify({"status": "ok"}), 200
+
+def _generate_delivery_note_pdf_data(delivery_id):
+    """Helper function to generate delivery note PDF data."""
     delivery = Delivery.query.get_or_404(delivery_id)
     
-    request_obj = RequestModel.query.get(delivery.request_id)
-    is_authorized = (
-        _is_admin_user(current_user) or 
-        (request_obj and request_obj.user_id == current_user.id)
-    )
-    
-    if not is_authorized:
-        return _admin_required_json()
-    
     tool = Tool.query.get(delivery.tool_id)
+    if not tool:
+        return None, "Associated tool has been deleted. Cannot generate delivery note.", None
+    
     requester = Users.query.get(delivery.received_by)
+    if not requester:
+        return None, "Associated user account not found. Cannot generate delivery note.", None
     
     distributor = None
     if delivery.distributed_by:
@@ -1712,27 +2310,52 @@ def generate_delivery_note(delivery_id):
             distributor = current_user
             db.session.commit()
     
+    if not distributor:
+        distributor = current_user
+    
+    request_obj = RequestModel.query.get(delivery.request_id)
+    
     try:
         pdf_data = create_delivery_note_pdf(
             delivery=delivery,
             tool=tool,
             requester=requester,
-            distributor=distributor or current_user,
+            distributor=distributor,
             request_obj=request_obj
         )
         
         filename = f"delivery_note_{delivery.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         
-        return send_file(
-            BytesIO(pdf_data),
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name=filename
-        )
+        return pdf_data, None, filename
         
     except Exception as e:
         current_app.logger.exception("Failed to generate delivery note")
-        return jsonify({"error": f"Failed to generate delivery note: {str(e)}"}), 500
+        return None, f"Failed to generate delivery note: {str(e)}", None
+
+@api_bp.route("/delivery/generate-note/<int:delivery_id>", methods=["POST"])
+@login_required
+def generate_delivery_note(delivery_id):
+    """Generate PDF delivery note for confirmed delivery."""
+    delivery = Delivery.query.get_or_404(delivery_id)
+    request_obj = RequestModel.query.get(delivery.request_id)
+    is_authorized = (
+        _is_admin_user(current_user) or 
+        (request_obj and request_obj.user_id == current_user.id)
+    )
+    
+    if not is_authorized:
+        return _admin_required_json()
+    
+    pdf_data, error, filename = _generate_delivery_note_pdf_data(delivery_id)
+    if error:
+        return jsonify({"error": error}), 404 if "deleted" in error or "not found" in error else 500
+    
+    return send_file(
+        BytesIO(pdf_data),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 @api_bp.route("/delivery/pending-confirmations", methods=["GET"])
@@ -1831,7 +2454,75 @@ def download_delivery_note(delivery_id):
     if not is_authorized:
         return _admin_required_json()
     
-    return generate_delivery_note(delivery_id)
+    pdf_data, error, filename = _generate_delivery_note_pdf_data(delivery_id)
+    if error:
+        return jsonify({"error": error}), 404 if "deleted" in error or "not found" in error else 500
+    
+    return send_file(
+        BytesIO(pdf_data),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
+
+@api_bp.route("/delivery/confirmed", methods=["GET"])
+@login_required
+def list_confirmed_delivery_notes():
+    """List all confirmed delivery notes. Facility users see only their own; admins see all."""
+    is_admin = _is_admin_user(current_user)
+    
+    query = db.session.query(
+        Delivery,
+        Tool,
+        Users,
+        RequestModel
+    ).outerjoin(
+        Tool, Delivery.tool_id == Tool.id
+    ).outerjoin(
+        Users, Delivery.received_by == Users.id
+    ).outerjoin(
+        RequestModel, Delivery.request_id == RequestModel.id
+    ).filter(
+        Delivery.is_delivered == True
+    )
+    
+    # Facility users only see their own delivery notes
+    if not is_admin:
+        query = query.filter(Delivery.received_by == current_user.id)
+    
+    deliveries = query.order_by(
+        Delivery.delivery_confirmed_at.desc().nullslast(),
+        Delivery.delivery_date.desc().nullslast(),
+        Delivery.created_at.desc()
+    ).all()
+    
+    result = []
+    for delivery, tool, user, req in deliveries:
+        tool_name = tool.name if tool else "Unknown Tool"
+        user_name = user.first_name or user.username if user else "Unknown"
+        user_facility = user.facility if user else "Unknown"
+        req_status = req.status if req else "Unknown"
+        
+        result.append({
+            "id": delivery.id,
+            "request_id": delivery.request_id,
+            "tool_id": delivery.tool_id,
+            "tool_name": tool_name,
+            "quantity_supplied": delivery.quantity_supplied,
+            "basic_unit": delivery.basic_unit,
+            "received_by": delivery.received_by,
+            "received_by_name": user_name,
+            "facility": user_facility,
+            "witnessed_by": delivery.witnessed_by,
+            "delivery_date": delivery.delivery_date.isoformat() if delivery.delivery_date else None,
+            "delivery_confirmed_at": delivery.delivery_confirmed_at.isoformat() if delivery.delivery_confirmed_at else None,
+            "request_status": req_status,
+            "has_note": bool(delivery.delivery_note_generated_at),
+        })
+    
+    return jsonify(result), 200
 
 
 # -----------------------
@@ -1934,34 +2625,137 @@ def generate_request_summary_report():
 @api_bp.route("/reports/inventory-consumption", methods=["GET"])
 @login_required
 def generate_inventory_consumption_report():
-    """Simplified inventory report with only Tool name and Current Stock."""
+    """Detailed inventory consumption report with comprehensive columns."""
     if not _is_admin_user(current_user):
         return _admin_required_json()
 
     out_format = (request.args.get("format") or "xlsx").strip().lower()
+    facility_filter = (request.args.get("facility") or "").strip()
+    start_date = request.args.get("start_date", "").strip()
+    end_date = request.args.get("end_date", "").strip()
     save_local = (request.args.get("save") or "0").strip().lower() in ("1", "true", "yes")
 
     tools = Tool.query.order_by(Tool.name.asc()).all()
 
+    # Pre-fetch all facility stocks, deliveries, requests, distributions, counts in bulk
+    all_facility_stocks = FacilityStock.query.all()
+    stock_by_tool = {}
+    for fs in all_facility_stocks:
+        stock_by_tool.setdefault(fs.tool_id, []).append(fs)
+
+    # Delivery aggregates per tool
+    delivery_qty = dict(
+        db.session.query(Delivery.tool_id, func.coalesce(func.sum(Delivery.quantity_supplied), 0))
+        .filter(Delivery.is_delivered == True)
+        .group_by(Delivery.tool_id).all()
+    )
+
+    # Department distribution aggregates per tool
+    distribution_qty = dict(
+        db.session.query(DepartmentDistribution.tool_id, func.coalesce(func.sum(DepartmentDistribution.quantity), 0))
+        .group_by(DepartmentDistribution.tool_id).all()
+    )
+
+    # Request aggregates per tool
+    request_counts = dict(
+        db.session.query(RequestedTool.tool_id, func.count(RequestedTool.id))
+        .group_by(RequestedTool.tool_id).all()
+    )
+    approved_qty = dict(
+        db.session.query(RequestedTool.tool_id, func.coalesce(func.sum(RequestedTool.quantity), 0))
+        .filter(RequestedTool.status == 'approved')
+        .group_by(RequestedTool.tool_id).all()
+    )
+    pending_qty = dict(
+        db.session.query(RequestedTool.tool_id, func.coalesce(func.sum(RequestedTool.quantity), 0))
+        .filter(RequestedTool.status == 'pending')
+        .group_by(RequestedTool.tool_id).all()
+    )
+
+    # Latest physical count per tool
+    latest_counts = {}
+    all_counts = PhysicalStockCount.query.order_by(PhysicalStockCount.counted_at.desc()).all()
+    for pc in all_counts:
+        if pc.tool_id not in latest_counts:
+            latest_counts[pc.tool_id] = pc
+
+    # Stock receipts per tool
+    receipt_qty = {}
+    receipt_lines = db.session.query(
+        StockReceiptLine.tool_id, func.coalesce(func.sum(StockReceiptLine.quantity_received), 0)
+    ).group_by(StockReceiptLine.tool_id).all()
+    for tid, qty in receipt_lines:
+        receipt_qty[tid] = int(qty or 0)
+
     data_list = []
     for tool in tools:
+        tid = tool.id
+        cat_name = tool.category.name if getattr(tool, "category", None) else "Uncategorized"
+
+        fs_list = stock_by_tool.get(tid, [])
+        facilities_with_stock = [fs.facility for fs in fs_list if fs.quantity > 0]
+        total_opening = sum(fs.opening_balance or 0 for fs in fs_list)
+        total_qty_received = sum(fs.qty_received or 0 for fs in fs_list)
+        total_facility_stock = sum(fs.quantity or 0 for fs in fs_list)
+
+        qty_supplied = int(delivery_qty.get(tid, 0) or 0)
+        qty_distributed = int(distribution_qty.get(tid, 0) or 0)
+        qty_receipts = int(receipt_qty.get(tid, 0) or 0)
+        total_requests = int(request_counts.get(tid, 0) or 0)
+        qty_approved = int(approved_qty.get(tid, 0) or 0)
+        qty_pending = int(pending_qty.get(tid, 0) or 0)
+
+        # Qty Utilized = opening_balance + approved requests (ever-increasing)
+        qty_utilized = total_opening + qty_approved
+
+        latest_pc = latest_counts.get(tid)
+        physical_count = latest_pc.physical_quantity if latest_pc else None
+        discrepancy = (physical_count - total_facility_stock) if physical_count is not None else None
+        last_counted = latest_pc.counted_at.isoformat() if latest_pc and latest_pc.counted_at else None
+
         data_list.append({
             "Tool Name": tool.name,
-            "Current Stock": tool.quantity or 0
+            "Category": cat_name,
+            "Facilities with Stock": ", ".join(facilities_with_stock) if facilities_with_stock else "—",
+            "Facility Count": len(facilities_with_stock),
+            "Opening Balance": total_opening,
+            "Qty Supplied (Deliveries)": qty_supplied,
+            "Qty Received (Manual)": total_qty_received,
+            "Qty from Receipts": qty_receipts,
+            "Qty Distributed (Depts)": qty_distributed,
+            "Current Facility Stock": total_facility_stock,
+            "Master Stock": tool.quantity or 0,
+            "Total Requests": total_requests,
+            "Approved Qty": qty_approved,
+            "Pending Qty": qty_pending,
+            "Qty Utilized": qty_utilized,
+            "Physical Count": physical_count if physical_count is not None else "—",
+            "Discrepancy": discrepancy if discrepancy is not None else "—",
+            "Last Counted": last_counted or "—",
         })
+
+    # Filter by facility if specified
+    if facility_filter:
+        data_list = [d for d in data_list if facility_filter in d["Facilities with Stock"]]
 
     df = pd.DataFrame(data_list)
 
+    date_tag = datetime.now().strftime("%Y%m%d_%H%M")
     if out_format == "csv":
-        filename = f"inventory_stock_report_{datetime.now().date()}.csv"
+        filename = f"inventory_consumption_{date_tag}.csv"
         data_bytes = df.to_csv(index=False).encode("utf-8-sig")
         mimetype = "text/csv"
     elif out_format == "xlsx":
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
-            df.to_excel(writer, sheet_name="Current Stock", index=False)
+            df.to_excel(writer, sheet_name="Inventory Consumption", index=False)
+            # Auto-fit column widths
+            ws = writer.sheets["Inventory Consumption"]
+            for i, col in enumerate(df.columns):
+                max_width = max(df[col].astype(str).apply(len).max(), len(col)) + 2
+                ws.set_column(i, i, min(max_width, 50))
         data_bytes = bio.getvalue()
-        filename = f"inventory_stock_report_{datetime.now().date()}.xlsx"
+        filename = f"inventory_consumption_{date_tag}.xlsx"
         mimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     else:
         return jsonify({"error": "Unsupported format. Use csv or xlsx"}), 400

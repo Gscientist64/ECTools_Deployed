@@ -36,9 +36,9 @@ with app.app_context():
     if hasattr(u, "roles"):       u.roles = ROLE
     if hasattr(u, "role"):        u.role  = ROLE
 
-    # make sure BOTH forms are set so login works no matter what:
-    if hasattr(u, "password"):        u.password = PASSWORD                 # plaintext (legacy)
-    if hasattr(u, "password_hash"):   u.password_hash = generate_password_hash(PASSWORD)  # hashed
+    # Hash password properly — always use pbkdf2 for compatibility
+    if hasattr(u, "password"):        u.password = generate_password_hash(PASSWORD, method="pbkdf2:sha256")
+    if hasattr(u, "password_hash"):   u.password_hash = generate_password_hash(PASSWORD, method="pbkdf2:sha256")
 
     db.session.add(u)
     db.session.commit()

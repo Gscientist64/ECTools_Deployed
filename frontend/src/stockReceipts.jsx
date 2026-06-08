@@ -81,7 +81,6 @@ export default function StockReceiptsScreen() {
       return;
     }
     const tool = tools.find(t => t.id === tid);
-    const sn = serialNumber.trim() || `SN-${lines.length + 1}`;
     // Prevent duplicate tool in same receipt
     if (lines.some(l => l.tool_id === tid)) {
       push('This tool is already in the receipt lines', 'error');
@@ -90,7 +89,8 @@ export default function StockReceiptsScreen() {
     setLines([...lines, {
       tool_id: tid,
       tool_name: tool?.name || `Tool #${tid}`,
-      serial_number: sn,
+      category: tool?.category || 'Uncategorized',
+      serial_number: tool?.category || 'Uncategorized', // keep for backend compat
       quantity_received: qty,
     }]);
     setSelectedToolId('');
@@ -208,9 +208,17 @@ export default function StockReceiptsScreen() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Supplied From *</label>
-              <input type="text" value={suppliedFrom} onChange={e => setSuppliedFrom(e.target.value)}
-                placeholder="e.g. HQ, District, Vendor name"
-                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800" />
+              <select value={suppliedFrom} onChange={e => setSuppliedFrom(e.target.value)}
+                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800">
+                <option value="">Select source...</option>
+                <option value="HQ">HQ</option>
+                <option value="State Office (Lagos)">State Office (Lagos)</option>
+                <option value="State Office (Akwa Ibom)">State Office (Akwa Ibom)</option>
+                <option value="State Office (CRS)">State Office (CRS)</option>
+                <option value="NASCP">NASCP</option>
+                <option value="IP">IP</option>
+                <option value="Others">Others</option>
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Supplied By *</label>
@@ -218,14 +226,6 @@ export default function StockReceiptsScreen() {
                 placeholder="Person who supplied"
                 className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800" />
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Notes</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder="Optional remarks..."
-              rows={2}
-              className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800" />
           </div>
 
           {/* Lines table */}
@@ -252,10 +252,11 @@ export default function StockReceiptsScreen() {
                 )}
               </div>
               <div>
-                <label className="block text-xs mb-1">Serial #</label>
-                <input type="text" value={serialNumber} onChange={e => setSerialNumber(e.target.value)}
-                  placeholder="Auto if blank"
-                  className="w-36 border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800 text-sm" />
+                <label className="block text-xs mb-1">Category</label>
+                <input type="text" 
+                  value={selectedToolId ? (tools.find(t => t.id === parseInt(selectedToolId, 10))?.category || 'Uncategorized') : ''}
+                  readOnly
+                  className="w-44 border border-neutral-200 rounded-xl px-3 py-2 bg-neutral-50 text-sm text-neutral-600" />
               </div>
               <div>
                 <label className="block text-xs mb-1">Qty Received</label>
@@ -275,7 +276,7 @@ export default function StockReceiptsScreen() {
                   <tr className="border-b text-left text-xs uppercase text-neutral-500">
                     <th className="py-2 pr-2">#</th>
                     <th className="py-2 pr-2">Tool Name</th>
-                    <th className="py-2 pr-2">Serial Number</th>
+                    <th className="py-2 pr-2">Category</th>
                     <th className="py-2 pr-2">Qty Received</th>
                     <th className="py-2"></th>
                   </tr>
@@ -285,7 +286,7 @@ export default function StockReceiptsScreen() {
                     <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
                       <td className="py-2 pr-2">{i + 1}</td>
                       <td className="py-2 pr-2 font-medium">{l.tool_name}</td>
-                      <td className="py-2 pr-2 text-neutral-500">{l.serial_number}</td>
+                      <td className="py-2 pr-2 text-neutral-500">{l.category || l.serial_number}</td>
                       <td className="py-2 pr-2">{l.quantity_received}</td>
                       <td className="py-2">
                         <button onClick={() => removeLine(i)}
@@ -296,6 +297,14 @@ export default function StockReceiptsScreen() {
                 </tbody>
               </table>
             )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Optional remarks..."
+              rows={2}
+              className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl px-3 py-2 bg-white dark:bg-neutral-800" />
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

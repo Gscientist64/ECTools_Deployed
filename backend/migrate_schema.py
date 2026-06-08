@@ -92,6 +92,25 @@ if "physical_stock_count" not in tables:
     """)
     print("[OK] Created physical_stock_count table")
 
+# 99. Create facility_transfer table if not exists
+if "facility_transfer" not in tables:
+    cur.execute("""
+        CREATE TABLE facility_transfer (
+            id SERIAL PRIMARY KEY,
+            from_facility VARCHAR(100) NOT NULL,
+            to_facility VARCHAR(100) NOT NULL,
+            tool_id INTEGER NOT NULL REFERENCES tool(id),
+            quantity INTEGER NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            notes VARCHAR(300) DEFAULT '',
+            initiated_by INTEGER NOT NULL REFERENCES users(id),
+            responded_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT NOW(),
+            responded_at TIMESTAMP
+        )
+    """)
+    print("[OK] Created facility_transfer table")
+
 # Verify columns in request
 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='request'")
 cols = [r[0] for r in cur.fetchall()]
