@@ -81,10 +81,6 @@ def create_app():
     # --- One-time DB setup / seeding ---
     with app.app_context():
         db.create_all()
-        default_categories = ["Office Supplies", "Cleaning", "Furniture"]
-        for name in default_categories:
-            if not ToolCategory.query.filter_by(name=name).first():
-                db.session.add(ToolCategory(name=name))
         db.session.commit()
 
     # --- API under /api ---
@@ -110,8 +106,8 @@ def create_app():
             masked = uri
         return {"db": masked}, 200
 
-    @app.route("/", defaults={"path": ""})
-    @app.route("/<path:path>")
+    @app.route("/", defaults={"path": ""}, methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    @app.route("/<path:path>", methods=["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
     def serve_spa(path: str):
         # Don’t let the SPA claim API routes
         if path.startswith("api/"):
@@ -155,36 +151,66 @@ def _open_browser_when_ready(url: str, tries: int = 25, delay: float = 0.2):
 
 
 if __name__ == "__main__":
-    import threading, time, webbrowser, socket
+    import socket
+    import threading
+    import time
+    import webbrowser
+    import sys
 
-    def wait_then_open():
-        host, port = "127.0.0.1", 5000
-        for _ in range(50):
+    def _msgbox(title, msg):
+        """Show a Windows popup when there is no console window."""
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, str(msg), str(title), 0x10)
+        except Exception:
+            pass  # non-Windows or ctypes unavailable
+
+    def _find_free_port(start=5000, tries=10):
+        for port in range(start, start + tries):
             try:
-                with socket.create_connection((host, port), timeout=0.3):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("127.0.0.1", port))
+                    return port
+            except OSError:
+                continue
+        return None
+
+    PORT = _find_free_port(5000)
+    if PORT is None:
+        _msgbox(
+            "EC Tools — Cannot Start",
+            "All ports 5000-5009 are in use.\n\n"
+            "Close other applications and try again."
+        )
+        sys.exit(1)
+
+    URL = f"http://127.0.0.1:{PORT}"
+
+    try:
+        app = create_app()
+    except Exception as exc:
+        _msgbox(
+            "EC Tools — Startup Error",
+            f"The application could not start:\n\n{exc}\n\n"
+            "Please check your internet connection and try again."
+        )
+        sys.exit(1)
+
+    def _open_when_ready():
+        for _ in range(60):
+            try:
+                with socket.create_connection(("127.0.0.1", PORT), timeout=0.3):
                     break
             except OSError:
                 time.sleep(0.2)
-        print(f"[INFO] Opening browser at http://{host}:{port}")
-        try:
-            webbrowser.open(f"http://{host}:{port}")
-        except Exception as e:
-            print(f"[WARN] Could not open browser automatically: {e}")
+        webbrowser.open(URL)
 
-    print("[INFO] Starting EC Tools server…")
-    print("[INFO] If a Windows Firewall prompt appears, click Allow.")
-    print("[INFO] Frontend build should be at ../frontend/dist (index.html must exist).")
-    print("[INFO] Then app will open at http://127.0.0.1:5000")
+    threading.Thread(target=_open_when_ready, daemon=True).start()
 
-    from waitress import serve  # pip install waitress
-    app = create_app()
-
-    # Auto-open browser so you see it immediately:
-    threading.Thread(target=wait_then_open, daemon=True).start()
-
+    from waitress import serve
     try:
-        serve(app, host="127.0.0.1", port=5000)
-    except OSError as e:
-        print(f"[ERROR] Could not bind to 127.0.0.1:5000: {e}")
-        print("[HINT] Another program might be using port 5000.")
-        raise
+        serve(app, host="127.0.0.1", port=PORT, threads=8)
+    except Exception as exc:
+        _msgbox("EC Tools — Server Error", str(exc))
+        sys.exit(1)

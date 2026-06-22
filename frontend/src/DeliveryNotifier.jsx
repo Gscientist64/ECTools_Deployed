@@ -1,391 +1,291 @@
-// frontend/src/DeliveryNotifier.jsx
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Bell, X, CheckCircle, Package, Download, Eye } from 'lucide-react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import {
+  Bell, X, CheckCircle, Package, Download, AlertCircle,
+  Clock, ChevronRight,
+} from 'lucide-react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { useAuth } from './auth';
 
-// Individual Notification Component
-function NotificationItem({ notification, onMarkRead, onView, onDownload }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  
-  const getIcon = () => {
-    switch (notification.type) {
-      case 'delivery_confirmed':
-        return <Package className="h-5 w-5 text-green-500" />;
-      default:
-        return <Bell className="h-5 w-5 text-blue-500" />;
-    }
+// ─── read-state helpers (localStorage for non-integer ids) ───────────────────
+
+const READ_KEY = 'ecews_notif_read';
+
+function getReadSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+
+function markLocalRead(id) {
+  const s = getReadSet();
+  s.add(String(id));
+  try { localStorage.setItem(READ_KEY, JSON.stringify([...s])); } catch {}
+}
+
+function isLocalRead(id) {
+  return getReadSet().has(String(id));
+}
+
+// ─── single notification row ──────────────────────────────────────────────────
+
+function NotifRow({ n, onDismiss, onDownload, isAdmin }) {
+  const [exp, setExp] = useState(false);
+
+  const cfg = {
+    request_approved:  { Icon: CheckCircle, ring: 'ring-emerald-200', dot: 'bg-emerald-500', iconCls: 'text-emerald-600', bg: 'bg-emerald-50' },
+    request_rejected:  { Icon: AlertCircle, ring: 'ring-rose-200',    dot: 'bg-rose-500',    iconCls: 'text-rose-600',    bg: 'bg-rose-50'    },
+    delivery_confirmed:{ Icon: Package,     ring: 'ring-blue-200',    dot: 'bg-blue-500',    iconCls: 'text-blue-600',    bg: 'bg-blue-50'    },
+  }[n.type] ?? { Icon: Bell, ring: 'ring-neutral-200', dot: 'bg-neutral-400', iconCls: 'text-neutral-500', bg: 'bg-neutral-50' };
+
+  const { Icon, ring, dot, iconCls, bg } = cfg;
+
+  const ago = (ts) => {
+    if (!ts) return '';
+    const sec = Math.floor((Date.now() - new Date(ts)) / 1000);
+    if (sec < 60) return 'just now';
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
   };
-  
-  const getTimeAgo = (timestamp) => {
-    const seconds = Math.floor((new Date() - new Date(timestamp)) / 1000);
-    if (seconds < 60) return `${seconds} seconds ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-    const days = Math.floor(hours / 24);
-    return `${days} day${days === 1 ? '' : 's'} ago`;
-  };
-  
+
   return (
-    <div 
-      className={`border-b border-neutral-200 dark:border-neutral-700 last:border-0 transition-all ${
-        !notification.is_read ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''
-      }`}
-    >
-      <div className="p-4 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition cursor-pointer">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 mt-0.5">
-            {getIcon()}
-          </div>
-          
-          <div className="flex-1 min-w-0" onClick={() => setIsExpanded(!isExpanded)}>
-            <div className="flex items-center justify-between mb-1">
-              <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                {notification.title}
-              </h4>
-              <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                {getTimeAgo(notification.timestamp)}
-              </span>
-            </div>
-            
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {notification.message}
-            </p>
-            
-            {isExpanded && notification.type === 'delivery_confirmed' && (
-              <div className="mt-3 p-3 bg-neutral-100 dark:bg-neutral-700 rounded-lg space-y-2">
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Tool:</span>
-                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{notification.tool_name}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Quantity:</span>
-                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{notification.quantity}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Facility:</span>
-                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{notification.facility}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Confirmed by:</span>
-                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{notification.requester}</p>
-                  </div>
-                </div>
-                
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onView(notification.request_id);
-                    }}
-                    className="flex-1 px-3 py-1.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition"
-                  >
-                    <Eye className="h-3 w-3 inline mr-1" />
-                    View Request
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDownload(notification.delivery_id);
-                    }}
-                    className="flex-1 px-3 py-1.5 text-xs bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-800 transition"
-                  >
-                    <Download className="h-3 w-3 inline mr-1" />
-                    Download Note
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onMarkRead(notification.id);
-            }}
-            className="flex-shrink-0 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
-          >
-            <X className="h-4 w-4" />
-          </button>
+    <div className={`relative border-b border-neutral-100 last:border-0 ${!n.is_read ? bg : ''}`}>
+      <div
+        className="px-4 py-3 flex items-start gap-3 cursor-pointer hover:bg-neutral-50 transition-colors"
+        onClick={() => setExp(e => !e)}
+      >
+        {/* unread dot */}
+        {!n.is_read && (
+          <span className={`absolute top-3.5 left-1.5 h-2 w-2 rounded-full ${dot} flex-shrink-0`} />
+        )}
+
+        <div className={`flex-shrink-0 h-8 w-8 rounded-xl ring-1 ${ring} grid place-items-center`}>
+          <Icon className={`h-4 w-4 ${iconCls}`} />
         </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className={`text-xs font-bold truncate ${!n.is_read ? 'text-neutral-900' : 'text-neutral-600'}`}>
+              {n.title}
+            </span>
+            <span className="text-[10px] text-neutral-400 flex-shrink-0">{ago(n.timestamp)}</span>
+          </div>
+          <p className="text-xs text-neutral-600 line-clamp-2">{n.message}</p>
+        </div>
+
+        <button
+          onClick={e => { e.stopPropagation(); onDismiss(n.id); }}
+          className="flex-shrink-0 text-neutral-300 hover:text-neutral-500 transition-colors mt-0.5"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
+
+      {/* expanded details */}
+      {exp && (
+        <div className="px-4 pb-3 pl-14">
+          {n.type === 'request_rejected' && n.reason && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 mb-2">
+              <span className="font-semibold">Reason: </span>{n.reason}
+            </div>
+          )}
+          {n.type === 'delivery_confirmed' && isAdmin && n.delivery_id && (
+            <button
+              onClick={() => onDownload(n.delivery_id)}
+              className="flex items-center gap-1.5 text-xs font-medium text-sky-700 hover:text-sky-900 transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" />Download note
+            </button>
+          )}
+          {n.request_id && (
+            <div className="text-[10px] text-neutral-400">Request #{n.request_id}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-// Main Delivery Notifier Component
+// ─── main component ───────────────────────────────────────────────────────────
+
 export default function DeliveryNotifier() {
   const { push } = useToast();
-  const [notifications, setNotifications] = useState([]);
-  const [isOpen, setIsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const eventSourceRef = useRef(null);
-  
-  // Determine if current user is admin
-  const userRole = localStorage.getItem('user_role');
-  const isAdmin = userRole === 'admin';
-  
-  // Load recent notifications on mount (all users)
-  useEffect(() => {
-    loadRecentNotifications();
-    
-    // Cleanup on unmount
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-    };
+  const { me } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [notifs, setNotifs] = useState([]);
+  const esRef = useRef(null);
+
+  const isAdmin = me && ['admin', 'administrator', 'superadmin', 'hq_admin', 'hq admin']
+    .includes((me.role || me.roles || '').toLowerCase());
+
+  // merge server `is_read` with localStorage for string ids
+  const hydrate = useCallback((list) => {
+    return list.map(n => ({
+      ...n,
+      is_read: typeof n.id === 'number'
+        ? n.is_read
+        : (n.is_read || isLocalRead(n.id)),
+    }));
   }, []);
-  
-  // Connect to SSE stream when admin is logged in and notifier is mounted
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.getRecentNotifications();
+      setNotifs(hydrate(Array.isArray(data) ? data : []));
+    } catch {}
+  }, [hydrate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // SSE connection for ALL users
   useEffect(() => {
-    if (isAdmin) {
-      connectToNotificationStream();
-    }
-    
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+    if (!me) return;
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+
+    let retryMs = 3000;
+    let timer = null;
+
+    const connect = () => {
+      try {
+        const es = new EventSource('/api/notifications/stream', { withCredentials: true });
+        esRef.current = es;
+
+        es.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === 'heartbeat' || data.type === 'connected') return;
+
+            // Show a toast popup immediately
+            const toastMsg = {
+              request_approved:  () => push(data.message || 'Your request has been approved!', 'success', 6000),
+              request_rejected:  () => push(data.message || 'Your request was rejected.', 'error', 8000),
+              delivery_confirmed:() => push(data.message || 'A delivery was confirmed.', 'info', 5000),
+            }[data.type];
+            if (toastMsg) toastMsg();
+
+            // Prepend to notification list
+            setNotifs(cur => hydrate([{ ...data, is_read: false }, ...cur]));
+            retryMs = 3000;
+          } catch {}
+        };
+
+        es.onerror = () => {
+          es.close();
+          esRef.current = null;
+          timer = setTimeout(connect, retryMs);
+          retryMs = Math.min(retryMs * 2, 60000);
+        };
+      } catch {}
     };
-  }, []);
-  
-  const loadRecentNotifications = async () => {
-    try {
-      const recent = await api.getRecentNotifications();
-      setNotifications(recent);
-      updateUnreadCount(recent);
-    } catch (error) {
-      console.error('Failed to load recent notifications:', error);
+
+    connect();
+    return () => {
+      if (esRef.current) { esRef.current.close(); esRef.current = null; }
+      if (timer) clearTimeout(timer);
+    };
+  }, [me?.id]);
+
+  const unread = notifs.filter(n => !n.is_read).length;
+
+  const dismiss = async (id) => {
+    markLocalRead(id);
+    setNotifs(cur => cur.map(n => n.id === id ? { ...n, is_read: true } : n));
+    if (typeof id === 'number') {
+      try { await api.markNotificationRead(id); } catch {}
     }
   };
-  
-  const connectToNotificationStream = () => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-    
-    setIsConnecting(true);
-    
-    try {
-      const eventSource = new EventSource('/api/notifications/stream', {
-        withCredentials: true
-      });
-      
-      eventSource.onopen = () => {
-        console.log('Notification stream connected');
-        setIsConnecting(false);
-      };
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'delivery_confirmed') {
-            // Add new notification to the list
-            const newNotification = {
-              id: Date.now(),
-              ...data,
-              is_read: false
-            };
-            
-            setNotifications(prev => [newNotification, ...prev]);
-            setUnreadCount(prev => prev + 1);
-            
-            // Show toast notification
-            push(
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <span>{data.message}</span>
-              </div>,
-              'info',
-              5000
-            );
-            
-            // Play notification sound (optional)
-            playNotificationSound();
-          }
-        } catch (error) {
-          console.error('Error parsing notification:', error);
-        }
-      };
-      
-      eventSource.onerror = (error) => {
-        console.error('Notification stream error:', error);
-        eventSource.close();
-        setIsConnecting(false);
-        
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-          connectToNotificationStream();
-        }, 5000);
-      };
-      
-      eventSourceRef.current = eventSource;
-    } catch (error) {
-      console.error('Failed to connect to notification stream:', error);
-      setIsConnecting(false);
+
+  const dismissAll = async () => {
+    const deliveryIds = notifs.filter(n => typeof n.id === 'number' && !n.is_read).map(n => n.id);
+    notifs.filter(n => typeof n.id !== 'number').forEach(n => markLocalRead(n.id));
+    setNotifs(cur => cur.map(n => ({ ...n, is_read: true })));
+    if (deliveryIds.length) {
+      try { await api.markAllNotificationsRead(); } catch {}
     }
   };
-  
-  const playNotificationSound = () => {
-    try {
-      const audio = new Audio('/notification.mp3');
-      audio.play().catch(e => console.log('Audio play failed:', e));
-    } catch (error) {
-      // Silently fail if audio not available
-    }
-  };
-  
-  const updateUnreadCount = (notifs) => {
-    const count = notifs.filter(n => !n.is_read).length;
-    setUnreadCount(count);
-  };
-  
-  const markAsRead = async (notificationId) => {
-    try { await api.markNotificationRead(notificationId); } catch {}
-    setNotifications(prev => 
-      prev.map(n => 
-        n.id === notificationId ? { ...n, is_read: true } : n
-      )
-    );
-    setUnreadCount(prev => Math.max(0, prev - 1));
-  };
-  
-  const markAllAsRead = async () => {
-    try { await api.markAllNotificationsRead(); } catch {}
-    setNotifications(prev => 
-      prev.map(n => ({ ...n, is_read: true }))
-    );
-    setUnreadCount(0);
-    push('All notifications marked as read', 'success');
-  };
-  
-  const viewRequest = (requestId) => {
-    // Navigate to the request in admin panel
-    // You'll need to implement this based on your routing
-    window.location.href = `/admin?request_id=${requestId}`;
-    setIsOpen(false);
-  };
-  
-  const downloadDeliveryNote = async (deliveryId) => {
+
+  const download = async (deliveryId) => {
     try {
       const blob = await api.downloadDeliveryNote(deliveryId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `delivery_note_${deliveryId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      push('Delivery note downloaded successfully', 'success');
-    } catch (error) {
-      push('Failed to download delivery note', 'error');
-    }
+      const url = URL.createObjectURL(blob);
+      Object.assign(document.createElement('a'), {
+        href: url, download: `delivery_note_${deliveryId}.pdf`,
+      }).click();
+      URL.revokeObjectURL(url);
+    } catch { push('Failed to download note', 'error'); }
   };
-  
-  const clearAllNotifications = () => {
-    if (confirm('Clear all notifications? This cannot be undone.')) {
-      setNotifications([]);
-      setUnreadCount(0);
-      push('All notifications cleared', 'success');
-    }
-  };
-  
+
   return (
     <div className="relative">
-      {/* Notification Bell Button */}
+      {/* Bell button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
+        onClick={() => setOpen(o => !o)}
+        className="relative p-2 rounded-xl bg-white/80 hover:bg-white border border-neutral-200 shadow-sm transition"
+        title="Notifications"
       >
-        <Bell className="h-5 w-5 text-neutral-600 dark:text-neutral-400" />
-        {unreadCount > 0 && (
-          <span className="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-            {unreadCount > 99 ? '99+' : unreadCount}
+        <Bell className="h-5 w-5 text-neutral-600" />
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold leading-none">
+            {unread > 9 ? '9+' : unread}
           </span>
         )}
-        {isConnecting && (
-          <span className="absolute bottom-0 right-0 h-2 w-2 bg-yellow-500 rounded-full animate-pulse"></span>
-        )}
       </button>
-      
-      {/* Notifications Dropdown */}
-      {isOpen && (
+
+      {/* Dropdown */}
+      {open && (
         <>
-          {/* Backdrop */}
-          <div 
-            className="fixed inset-0 z-40"
-            onClick={() => setIsOpen(false)}
-          />
-          
-          {/* Dropdown Panel */}
-          <div className="absolute right-0 mt-2 w-96 bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-neutral-200 dark:border-neutral-700 z-50 overflow-hidden">
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-96 bg-white rounded-2xl shadow-2xl border border-neutral-200 z-50 overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 dark:border-neutral-700 bg-gradient-to-r from-emerald-50 to-white dark:from-emerald-950/30 dark:to-neutral-900">
+            <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between bg-neutral-50">
               <div>
-                <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">
-                  Notifications
-                </h3>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  Real-time delivery updates
-                </p>
+                <div className="text-sm font-bold text-neutral-900">Notifications</div>
+                <div className="text-xs text-neutral-500">
+                  {unread > 0 ? `${unread} unread` : 'All caught up'}
+                </div>
               </div>
               <div className="flex gap-2">
-                {notifications.length > 0 && (
-                  <>
-                    <button
-                      onClick={markAllAsRead}
-                      className="text-xs px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition"
-                    >
-                      Mark all read
-                    </button>
-                    <button
-                      onClick={clearAllNotifications}
-                      className="text-xs px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition"
-                    >
-                      Clear all
-                    </button>
-                  </>
+                {unread > 0 && (
+                  <button
+                    onClick={dismissAll}
+                    className="text-xs text-neutral-500 hover:text-neutral-700 underline"
+                  >
+                    Mark all read
+                  </button>
                 )}
+                <button onClick={load} className="text-xs text-neutral-400 hover:text-neutral-600">
+                  Refresh
+                </button>
               </div>
             </div>
-            
-            {/* Notifications List */}
-            <div className="max-h-96 overflow-y-auto">
-              {notifications.length === 0 ? (
-                <div className="p-8 text-center">
-                  <Bell className="h-12 w-12 text-neutral-300 dark:text-neutral-600 mx-auto mb-3" />
-                  <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                    No notifications yet
-                  </p>
-                  <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1">
-                    When facility users confirm deliveries, you'll see them here
+
+            {/* List */}
+            <div className="max-h-[420px] overflow-y-auto">
+              {notifs.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-12 text-neutral-400">
+                  <Bell className="h-8 w-8 opacity-30" />
+                  <p className="text-sm">No notifications yet</p>
+                  <p className="text-xs text-neutral-300">
+                    {isAdmin ? 'Delivery confirmations appear here.' : 'Request updates appear here.'}
                   </p>
                 </div>
               ) : (
-                notifications.map((notification) => (
-                  <NotificationItem
-                    key={notification.id}
-                    notification={notification}
-                    onMarkRead={markAsRead}
-                    onView={viewRequest}
-                    onDownload={downloadDeliveryNote}
+                notifs.map(n => (
+                  <NotifRow
+                    key={n.id}
+                    n={n}
+                    onDismiss={dismiss}
+                    onDownload={download}
+                    isAdmin={isAdmin}
                   />
                 ))
               )}
             </div>
-            
+
             {/* Footer */}
-            {notifications.length > 0 && (
-              <div className="px-4 py-2 border-t border-neutral-200 dark:border-neutral-700 text-center">
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  🔔 Real-time notifications active
-                </p>
+            {notifs.length > 0 && (
+              <div className="px-4 py-2 border-t border-neutral-100 text-center">
+                <p className="text-[10px] text-neutral-400">Last 7 days · Real-time updates active</p>
               </div>
             )}
           </div>

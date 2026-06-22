@@ -1,583 +1,374 @@
-// myInventory.jsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
-import { Package, ArrowRightLeft, ClipboardCheck, Loader2, AlertTriangle, CheckCircle, XCircle, RefreshCw, Search, ChevronDown, ChevronRight, ChevronLeft, Calendar } from 'lucide-react';
+import {
+  Package, ArrowRightLeft, ClipboardList, Loader2, RefreshCw, Search,
+  TrendingDown, ChevronDown, X, Check, AlertTriangle, Plus, Minus,
+  History, BarChart2, ChevronRight, ChevronLeft, Calendar,
+} from 'lucide-react';
 
 const DEPARTMENTS = [
-  { value: 'pharmacy', label: 'Pharmacy' },
-  { value: 'lab', label: 'Lab' },
-  { value: 'triage', label: 'Triage' },
+  { value: 'pharmacy',  label: 'Pharmacy'  },
+  { value: 'lab',       label: 'Lab'       },
+  { value: 'triage',    label: 'Triage'    },
   { value: 'community', label: 'Community' },
-  { value: 'm&e', label: 'M&E' },
-  { value: 'others', label: 'Others' },
+  { value: 'm&e',       label: 'M&E'       },
+  { value: 'others',    label: 'Others'    },
 ];
 
-// Searchable tool name dropdown component
-function ToolSearchInput({ value, onChange, placeholder, className, required, toolsList, loadingTools, onSearchChange }) {
+// ─── Tool picker with search ──────────────────────────────────────────────────
+
+function ToolPicker({ value, onChange, toolsList, loading, placeholder }) {
   const [open, setOpen] = useState(false);
-  const wrapperRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
+  const ref = useRef(null);
   const filtered = (toolsList || []).filter(t =>
-    t.name.toLowerCase().includes((value || '').toLowerCase())
+    !value || t.name.toLowerCase().includes(value.toLowerCase())
   );
 
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
   return (
-    <div ref={wrapperRef} className="relative">
+    <div ref={ref} className="relative">
       <div className="relative">
         <input
           type="text"
           value={value}
-          onChange={e => { onChange(e.target.value); onSearchChange && onSearchChange(e.target.value); setOpen(true); }}
+          onChange={e => { onChange(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
-          placeholder={placeholder || "Search tool name..."}
-          className={`border border-neutral-300 rounded-lg px-3 py-2 text-sm w-56 pr-8 bg-white ${className || ''}`}
-          required={required}
+          placeholder={placeholder || 'Search for a tool…'}
+          className="w-full border border-neutral-200 rounded-xl px-4 py-3 text-sm pr-10 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
           autoComplete="off"
         />
-        <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+        {loading
+          ? <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-neutral-400" />
+          : <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 pointer-events-none" />
+        }
       </div>
-      {open && value && filtered.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-neutral-200 rounded-lg shadow-lg">
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-neutral-200 rounded-xl shadow-lg">
           {filtered.map(t => (
-            <button
-              key={t.id}
-              type="button"
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 hover:text-emerald-700 border-b border-neutral-50 last:border-0"
+            <button key={t.id} type="button"
+              className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-50 hover:text-emerald-800 border-b border-neutral-50 last:border-0 transition"
               onClick={() => { onChange(t.name); setOpen(false); }}
             >
               <span className="font-medium">{t.name}</span>
-              {t.category && <span className="text-xs text-neutral-400 ml-2">({t.category})</span>}
+              {t.category && <span className="text-xs text-neutral-400 ml-2">{t.category}</span>}
             </button>
           ))}
-        </div>
-      )}
-      {loadingTools && (
-        <div className="absolute right-8 top-1/2 -translate-y-1/2">
-          <Loader2 className="h-3 w-3 animate-spin text-neutral-400" />
         </div>
       )}
     </div>
   );
 }
 
-export default function MyInventoryScreen() {
+// ─── Quantity stepper ─────────────────────────────────────────────────────────
+
+function QtyInput({ value, onChange, min = 0 }) {
+  const n = parseInt(value) || 0;
+  return (
+    <div className="flex items-center gap-0 rounded-xl border border-neutral-200 overflow-hidden w-fit bg-white">
+      <button type="button" onClick={() => onChange(Math.max(min, n - 1))}
+        disabled={n <= min}
+        className="px-3 py-2.5 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30 transition text-lg leading-none">−</button>
+      <input
+        type="number" inputMode="numeric" min={min}
+        value={value === '' ? '' : n}
+        onChange={e => { const v = e.target.value.replace(/[^\d]/g, ''); onChange(v === '' ? '' : Math.max(min, parseInt(v) || 0)); }}
+        className="w-16 text-center text-base font-bold text-neutral-900 bg-transparent outline-none py-2"
+      />
+      <button type="button" onClick={() => onChange(n + 1)}
+        className="px-3 py-2.5 text-neutral-500 hover:bg-neutral-100 transition text-lg leading-none">+</button>
+    </div>
+  );
+}
+
+// ─── Action modal ─────────────────────────────────────────────────────────────
+
+function ActionModal({ mode, toolsList, toolsLoading, onClose, onDone }) {
   const { push } = useToast();
-  const [view, setView] = useState('stock'); // stock | distribute | counts | summary
-  const [loading, setLoading] = useState(false);
+  const [toolName, setToolName] = useState('');
+  const [qty, setQty] = useState(1);
+  const [dept, setDept] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  // Stock data
-  const [stock, setStock] = useState([]);
-  const [editReceived, setEditReceived] = useState({}); // { facility_stock_id: value }
-  const [savingReceived, setSavingReceived] = useState({});
-  const [distributions, setDistributions] = useState([]);
-  const [counts, setCounts] = useState([]);
-  const [summary, setSummary] = useState(null);
+  const findToolId = name =>
+    (toolsList.find(t => t.name.toLowerCase() === name.toLowerCase()) || {}).id || null;
 
-  // Tools list for search
-  const [toolsList, setToolsList] = useState([]);
-  const [toolsLoading, setToolsLoading] = useState(false);
+  const config = {
+    usage: {
+      title: 'Record Usage',
+      icon: TrendingDown,
+      iconBg: 'bg-rose-500',
+      description: 'How many did your facility consume or use today?',
+      qtyLabel: 'Quantity used',
+      submitLabel: 'Record Usage',
+      submitColor: 'bg-rose-600 hover:bg-rose-700',
+    },
+    distribute: {
+      title: 'Distribute to Department',
+      icon: ArrowRightLeft,
+      iconBg: 'bg-blue-500',
+      description: 'Send tools from your store to a department.',
+      qtyLabel: 'Quantity to distribute',
+      submitLabel: 'Record Distribution',
+      submitColor: 'bg-blue-600 hover:bg-blue-700',
+    },
+    count: {
+      title: 'Physical Count',
+      icon: ClipboardList,
+      iconBg: 'bg-violet-500',
+      description: 'Count what is physically on your shelf. This is for record-keeping only — it does not change your stock.',
+      qtyLabel: 'Actual quantity on shelf',
+      submitLabel: 'Submit Count',
+      submitColor: 'bg-violet-600 hover:bg-violet-700',
+    },
+  };
 
-  // Distribute form
-  const [distToolName, setDistToolName] = useState('');
-  const [distDepartment, setDistDepartment] = useState('');
-  const [distQuantity, setDistQuantity] = useState('');
+  const c = config[mode];
+  const Icon = c.icon;
 
-  // Physical count form
-  const [countToolName, setCountToolName] = useState('');
-  const [countQuantity, setCountQuantity] = useState('');
+  const submit = async () => {
+    if (!toolName.trim()) { push('Please select a tool', 'error'); return; }
+    const toolId = findToolId(toolName.trim());
+    if (!toolId) { push('Tool not found — please pick from the list', 'error'); return; }
+    const q = parseInt(qty);
+    if (isNaN(q) || q < 0) { push('Enter a valid quantity', 'error'); return; }
+    if (mode === 'distribute' && !dept) { push('Please select a department', 'error'); return; }
 
-  // Facility transfer form
-  const [transferToolName, setTransferToolName] = useState('');
-  const [transferToFacility, setTransferToFacility] = useState('');
-  const [transferQuantity, setTransferQuantity] = useState('');
-  const [transferNotes, setTransferNotes] = useState('');
-  const [facilities, setFacilities] = useState([]);
-  const [outgoingTransfers, setOutgoingTransfers] = useState([]);
-  const [incomingTransfers, setIncomingTransfers] = useState([]);
-
-  const fetchFacilities = useCallback(async () => {
+    setBusy(true);
     try {
-      const data = await api.listFacilities();
-      setFacilities(Array.isArray(data) ? data : []);
-    } catch {}
-  }, []);
-
-  const fetchTransfers = useCallback(async () => {
-    try {
-      const [outgoing, incoming] = await Promise.all([
-        api.outgoingTransfers(),
-        api.incomingTransfers()
-      ]);
-      setOutgoingTransfers(Array.isArray(outgoing) ? outgoing : []);
-      setIncomingTransfers(Array.isArray(incoming) ? incoming : []);
-    } catch {}
-  }, []);
-
-  useEffect(() => { fetchFacilities(); }, [fetchFacilities]);
-
-  // Fetch tools list for search
-  const fetchTools = useCallback(async () => {
-    setToolsLoading(true);
-    try {
-      const data = await api.tools();
-      setToolsList(Array.isArray(data) ? data : []);
+      if (mode === 'usage') {
+        await api.recordUtilization({ tool_id: toolId, quantity_used: q });
+        push(`${q} × ${toolName} recorded as used`, 'success');
+      } else if (mode === 'distribute') {
+        await api.distributeToDepartment({ tool_id: toolId, department: dept, basic_unit: 'unit', quantity: q });
+        push(`${q} × ${toolName} distributed to ${DEPARTMENTS.find(d => d.value === dept)?.label}`, 'success');
+      } else if (mode === 'count') {
+        await api.recordPhysicalCount({ tool_id: toolId, physical_quantity: q });
+        push('Physical count saved', 'success');
+      }
+      onDone();
     } catch (e) {
-      // silent
+      push(e.message || 'Something went wrong', 'error');
     } finally {
-      setToolsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchTools(); }, [fetchTools]);
-
-  const findToolId = (name) => {
-    const tool = toolsList.find(t => t.name.toLowerCase() === name.toLowerCase());
-    return tool ? tool.id : null;
-  };
-
-  const fetchStock = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.myStock();
-      setStock(data);
-    } catch (e) {
-      push(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [push]);
-
-  const fetchDistributions = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.myDistributions();
-      setDistributions(data);
-    } catch (e) {
-      push(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [push]);
-
-  const fetchCounts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.myPhysicalCounts();
-      setCounts(data);
-    } catch (e) {
-      push(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [push]);
-
-  const fetchSummary = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.myInventorySummary();
-      setSummary(data);
-    } catch (e) {
-      push(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [push]);
-
-  // Longitudinal stock view
-  const [longitudinalData, setLongitudinalData] = useState(null);
-  const [periodType, setPeriodType] = useState('week');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedPeriod, setSelectedPeriod] = useState('all'); // 'all' | week number | month number
-  const [expandedTools, setExpandedTools] = useState({}); // { tool_id: true/false }
-
-  const fetchLongitudinal = useCallback(async (pt, yr) => {
-    setLoading(true);
-    try {
-      const data = await api.myStockLongitudinal(pt || periodType, yr || selectedYear);
-      setLongitudinalData(data);
-      setSelectedPeriod('all');
-      const expanded = {};
-      (data.tools || []).forEach(t => {
-        if (t.periods && t.periods.length > 0) {
-          expanded[t.tool_id] = true;
-        }
-      });
-      setExpandedTools(expanded);
-    } catch (e) {
-      push(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [push, periodType, selectedYear]);
-
-  const toggleExpandTool = (toolId) => {
-    setExpandedTools(prev => ({ ...prev, [toolId]: !prev[toolId] }));
-  };
-
-  const handlePeriodChange = (pt) => {
-    setPeriodType(pt);
-    setSelectedPeriod('all');
-    fetchLongitudinal(pt, selectedYear);
-  };
-
-  const handleYearChange = (yr) => {
-    setSelectedYear(yr);
-    setSelectedPeriod('all');
-    fetchLongitudinal(periodType, yr);
-  };
-
-  // Filter periods for a tool based on selectedPeriod
-  const filterPeriods = (periods) => {
-    if (selectedPeriod === 'all') return periods;
-    if (periodType === 'week') return periods.filter(p => p.label.endsWith(`-W${String(selectedPeriod).padStart(2, '0')}`));
-    if (periodType === 'month') return periods.filter(p => p.label.endsWith(`-${String(selectedPeriod).padStart(2, '0')}`));
-    return periods;
-  };
-
-  // Build period dropdown options based on periodType
-  const periodOptions = () => {
-    if (periodType === 'week') {
-      return Array.from({ length: 52 }, (_, i) => ({ value: i + 1, label: `Week ${i + 1}` }));
-    }
-    if (periodType === 'month') {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      return months.map((m, i) => ({ value: i + 1, label: m }));
-    }
-    return []; // quarters — not used
-  };
-
-  // Navigate to previous/next period (for week/month, wraps around year)
-  const goToPrevPeriod = () => {
-    if (periodType === 'quarter') {
-      handleYearChange(selectedYear - 1);
-      return;
-    }
-    if (selectedPeriod === 'all') return;
-    const sp = parseInt(selectedPeriod);
-    if (sp <= 1) {
-      handleYearChange(selectedYear - 1);
-      if (periodType === 'week') setSelectedPeriod(52);
-      else setSelectedPeriod(12);
-    } else {
-      setSelectedPeriod(sp - 1);
+      setBusy(false);
     }
   };
-
-  const goToNextPeriod = () => {
-    if (periodType === 'quarter') {
-      handleYearChange(selectedYear + 1);
-      return;
-    }
-    if (selectedPeriod === 'all') return;
-    const sp = parseInt(selectedPeriod);
-    const max = periodType === 'week' ? 52 : 12;
-    if (sp >= max) {
-      handleYearChange(selectedYear + 1);
-      setSelectedPeriod(1);
-    } else {
-      setSelectedPeriod(sp + 1);
-    }
-  };
-
-  useEffect(() => {
-    if (view === 'stock') {
-      fetchLongitudinal();
-      fetchStock();
-    }
-    else if (view === 'distribute') { fetchDistributions(); fetchTransfers(); }
-    else if (view === 'counts') fetchCounts();
-    else if (view === 'summary') fetchSummary();
-  }, [view, fetchLongitudinal, fetchStock, fetchDistributions, fetchCounts, fetchSummary, fetchTransfers]);
-
-  const handleDistribute = async (e) => {
-    e.preventDefault();
-    if (!distToolName.trim()) { push('Select a tool name', 'error'); return; }
-    if (!distDepartment) { push('Select a department', 'error'); return; }
-
-    const toolId = findToolId(distToolName.trim());
-    if (!toolId) { push('Tool not found. Please select from the dropdown.', 'error'); return; }
-
-    try {
-      await api.distributeToDepartment({
-        tool_id: toolId,
-        department: distDepartment,
-        basic_unit: 'unit',
-        quantity: parseInt(distQuantity) || 1
-      });
-      push('Distribution recorded', 'success');
-      setDistToolName('');
-      setDistDepartment('');
-      setDistQuantity('');
-      fetchDistributions();
-      fetchStock();
-    } catch (e) {
-      push(e.message, 'error');
-    }
-  };
-
-  const handlePhysicalCount = async (e) => {
-    e.preventDefault();
-    if (!countToolName.trim()) { push('Select a tool name', 'error'); return; }
-
-    const toolId = findToolId(countToolName.trim());
-    if (!toolId) { push('Tool not found. Please select from the dropdown.', 'error'); return; }
-
-    try {
-      await api.recordPhysicalCount({
-        tool_id: toolId,
-        physical_quantity: parseInt(countQuantity) || 0
-      });
-      push('Physical count recorded', 'success');
-      setCountToolName('');
-      setCountQuantity('');
-      fetchCounts();
-      fetchStock();
-    } catch (e) {
-      push(e.message, 'error');
-    }
-  };
-
-  const handleFacilityTransfer = async (e) => {
-    e.preventDefault();
-    if (!transferToolName.trim()) { push('Select a tool name', 'error'); return; }
-    if (!transferToFacility) { push('Select a target facility', 'error'); return; }
-    const qty = parseInt(transferQuantity);
-    if (!qty || qty <= 0) { push('Enter a valid quantity', 'error'); return; }
-
-    try {
-      await api.initiateTransfer({
-        tool_name: transferToolName.trim(),
-        to_facility: transferToFacility,
-        quantity: qty,
-        notes: transferNotes
-      });
-      push(`Transfer of ${qty} ${transferToolName} to ${transferToFacility} initiated`, 'success');
-      setTransferToolName('');
-      setTransferToFacility('');
-      setTransferQuantity('');
-      setTransferNotes('');
-      fetchTransfers();
-      fetchStock();
-    } catch (e) {
-      push(e.message, 'error');
-    }
-  };
-
-  const tabClass = (t) => `px-4 py-2 text-sm font-medium rounded-xl transition ${view === t ? 'bg-emerald-600 text-white' : 'bg-neutral-100 hover:bg-neutral-200'}`;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Package className="h-6 w-6 text-emerald-700" />
-        <h1 className="text-xl font-bold">My Inventory</h1>
-      </div>
-
-      {/* Tab Bar */}
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => setView('stock')} className={tabClass('stock')}>Stock Levels</button>
-        <button onClick={() => setView('distribute')} className={tabClass('distribute')}>Distribute</button>
-        <button onClick={() => setView('counts')} className={tabClass('counts')}>Physical Counts</button>
-        <button onClick={() => setView('summary')} className={tabClass('summary')}>Summary</button>
-      </div>
-
-      {loading && (
-        <div className="flex items-center gap-2 text-neutral-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className={`px-5 py-4 flex items-center justify-between text-white ${c.iconBg}`}>
+          <div className="flex items-center gap-2.5">
+            <Icon className="h-5 w-5" />
+            <span className="font-bold text-base">{c.title}</span>
+          </div>
+          <button onClick={onClose} className="opacity-70 hover:opacity-100 transition"><X className="h-5 w-5" /></button>
         </div>
-      )}
 
-      {/* ---------- STOCK VIEW ---------- */}
-      {view === 'stock' && !loading && (
-        <div className="space-y-5">
-          {/* Period Toggle & Controls */}
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                {/* Period Toggle */}
-                <div className="flex bg-neutral-100 rounded-xl p-1">
-                  {['week', 'month', 'quarter'].map(pt => (
-                    <button
-                      key={pt}
-                      onClick={() => handlePeriodChange(pt)}
-                      className={`px-4 py-1.5 text-sm font-medium rounded-lg transition ${
-                        periodType === pt ? 'bg-emerald-600 text-white shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
-                      }`}
-                    >
-                      {pt.charAt(0).toUpperCase() + pt.slice(1)}
-                    </button>
-                  ))}
-                </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-neutral-500">{c.description}</p>
 
-                {/* Quarter: Year selector with prev/next */}
-                {periodType === 'quarter' && (
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => handleYearChange(selectedYear - 1)} className="p-1 hover:bg-neutral-100 rounded" title="Previous year"><ChevronLeft className="h-4 w-4" /></button>
-                    <div className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4 text-neutral-400" />
-                      <select value={selectedYear} onChange={e => handleYearChange(parseInt(e.target.value))} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm bg-white">
-                        {Array.from({ length: 5 }, (_, i) => 2026 + i).map(yr => (<option key={yr} value={yr}>{yr}</option>))}
-                      </select>
-                    </div>
-                    <button onClick={() => handleYearChange(selectedYear + 1)} className="p-1 hover:bg-neutral-100 rounded" title="Next year"><ChevronRight className="h-4 w-4" /></button>
-                  </div>
-                )}
-
-                {/* Week / Month: Period dropdown + Year selector */}
-                {(periodType === 'week' || periodType === 'month') && (
-                  <div className="flex items-center gap-1">
-                    <button onClick={goToPrevPeriod} className="p-1 hover:bg-neutral-100 rounded" title={`Previous ${periodType}`}><ChevronLeft className="h-4 w-4" /></button>
-                    <select
-                      value={selectedPeriod}
-                      onChange={e => setSelectedPeriod(e.target.value)}
-                      className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm bg-white font-medium"
-                    >
-                      <option value="all">All {periodType === 'week' ? 'Weeks' : 'Months'}</option>
-                      {periodOptions().map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={selectedYear}
-                      onChange={e => handleYearChange(parseInt(e.target.value))}
-                      className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm bg-white"
-                    >
-                      {Array.from({ length: 5 }, (_, i) => 2026 + i).map(yr => (<option key={yr} value={yr}>{yr}</option>))}
-                    </select>
-                    <button onClick={goToNextPeriod} className="p-1 hover:bg-neutral-100 rounded" title={`Next ${periodType}`}><ChevronRight className="h-4 w-4" /></button>
-                  </div>
-                )}
-              </div>
-              <button onClick={() => fetchLongitudinal()} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
+          {/* Tool */}
+          <div>
+            <label className="block text-xs font-bold text-neutral-600 uppercase tracking-wide mb-1.5">Tool *</label>
+            <ToolPicker value={toolName} onChange={setToolName} toolsList={toolsList} loading={toolsLoading} />
           </div>
 
-          {/* Longitudinal Data */}
-          {longitudinalData && longitudinalData.tools && longitudinalData.tools.length > 0 ? (
-            <div className="space-y-3">
-              {longitudinalData.tools.map(tool => {
-                const isExpanded = expandedTools[tool.tool_id] || false;
-                const allPeriods = tool.periods || [];
-                const periods = filterPeriods(allPeriods);
-                const latestPeriod = allPeriods.length > 0 ? allPeriods[allPeriods.length - 1] : null;
+          {/* Department (distribute only) */}
+          {mode === 'distribute' && (
+            <div>
+              <label className="block text-xs font-bold text-neutral-600 uppercase tracking-wide mb-1.5">Department *</label>
+              <div className="grid grid-cols-3 gap-2">
+                {DEPARTMENTS.map(d => (
+                  <button key={d.value} type="button"
+                    onClick={() => setDept(d.value)}
+                    className={`py-2 rounded-xl text-sm font-semibold border transition ${
+                      dept === d.value
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-neutral-700 border-neutral-200 hover:border-blue-300 hover:text-blue-700'
+                    }`}
+                  >{d.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
 
+          {/* Quantity */}
+          <div>
+            <label className="block text-xs font-bold text-neutral-600 uppercase tracking-wide mb-1.5">{c.qtyLabel}</label>
+            <QtyInput value={qty} onChange={setQty} min={0} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 pb-6 flex gap-3">
+          <button type="button" onClick={onClose}
+            className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-semibold hover:bg-neutral-50 transition">
+            Cancel
+          </button>
+          <button type="button" onClick={submit} disabled={busy}
+            className={`flex-1 py-3 rounded-xl text-white text-sm font-bold transition disabled:opacity-50 ${c.submitColor}`}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : c.submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stock card ───────────────────────────────────────────────────────────────
+
+function StockCard({ item }) {
+  const qty = (item.qty_received ?? 0) - (item.qty_utilized ?? 0);
+  const isOut = qty <= 0;
+  const isLow = !isOut && qty < 10;
+
+  return (
+    <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${
+      isOut ? 'bg-rose-50 border-rose-200' :
+      isLow ? 'bg-amber-50 border-amber-200' :
+      'bg-white border-neutral-200'
+    }`}>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm font-semibold text-neutral-900 leading-tight">{item.tool_name}</span>
+        {isOut && (
+          <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-200 text-rose-700 uppercase tracking-wide">Out</span>
+        )}
+        {isLow && (
+          <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-700 uppercase tracking-wide">Low</span>
+        )}
+      </div>
+      <div className={`text-3xl font-extrabold ${isOut ? 'text-rose-600' : isLow ? 'text-amber-600' : 'text-emerald-600'}`}>
+        {qty}
+      </div>
+      <div className="text-[11px] text-neutral-400 space-y-0.5">
+        <div>Received: <span className="font-semibold text-neutral-600">{item.qty_received ?? 0}</span></div>
+        <div>Used: <span className="font-semibold text-neutral-600">{item.qty_utilized ?? 0}</span></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Trends section (collapsible) ────────────────────────────────────────────
+
+function TrendsSection({ toolsList }) {
+  const { push } = useToast();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [periodType, setPeriodType] = useState('month');
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [expanded, setExpanded] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await api.myStockLongitudinal(periodType, year);
+      setData(d);
+      const exp = {};
+      (d.tools || []).forEach(t => { if ((t.periods || []).length) exp[t.tool_id] = true; });
+      setExpanded(exp);
+    } catch (e) { push(e.message, 'error'); }
+    finally { setLoading(false); }
+  }, [push, periodType, year]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const periodOptions = periodType === 'week'
+    ? Array.from({ length: 52 }, (_, i) => ({ value: i + 1, label: `Week ${i + 1}` }))
+    : ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => ({ value: i + 1, label: m }));
+
+  return (
+    <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-50 transition">
+        <div className="flex items-center gap-2.5">
+          <BarChart2 className="h-5 w-5 text-violet-500" />
+          <span className="font-bold text-sm text-neutral-900">Stock Trends</span>
+          <span className="text-xs text-neutral-400">— weekly or monthly history</span>
+        </div>
+        {open ? <ChevronDown className="h-4 w-4 text-neutral-400" /> : <ChevronRight className="h-4 w-4 text-neutral-400" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-neutral-100">
+          {/* Controls */}
+          <div className="px-5 py-3 flex flex-wrap items-center gap-3 bg-neutral-50">
+            <div className="flex bg-white border border-neutral-200 rounded-xl overflow-hidden">
+              {['week','month','quarter'].map(pt => (
+                <button key={pt} onClick={() => setPeriodType(pt)}
+                  className={`px-3 py-1.5 text-xs font-semibold transition ${periodType === pt ? 'bg-emerald-600 text-white' : 'text-neutral-600 hover:bg-neutral-100'}`}>
+                  {pt.charAt(0).toUpperCase() + pt.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setYear(y => y - 1)} className="p-1.5 hover:bg-neutral-200 rounded-lg"><ChevronLeft className="h-4 w-4" /></button>
+              <span className="text-sm font-bold text-neutral-700 w-12 text-center">{year}</span>
+              <button onClick={() => setYear(y => y + 1)} className="p-1.5 hover:bg-neutral-200 rounded-lg"><ChevronRight className="h-4 w-4" /></button>
+            </div>
+            <button onClick={load} className="p-1.5 hover:bg-neutral-200 rounded-lg text-neutral-500"><RefreshCw className="h-4 w-4" /></button>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-neutral-400"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…</div>
+          ) : !data || !data.tools?.length ? (
+            <div className="py-10 text-center text-sm text-neutral-400">No trend data for this period.</div>
+          ) : (
+            <div className="divide-y divide-neutral-50">
+              {data.tools.map(tool => {
+                const isExp = expanded[tool.tool_id];
+                const latest = (tool.periods || []).slice(-1)[0];
                 return (
-                  <div key={tool.tool_id} className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-                    {/* Tool Header */}
-                    <button
-                      onClick={() => toggleExpandTool(tool.tool_id)}
-                      className="w-full p-4 flex items-center justify-between hover:bg-neutral-50 transition text-left"
-                    >
-                      <div className="flex items-center gap-3">
-                        {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-neutral-400" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4 text-neutral-400" />
-                        )}
-                        <div>
-                          <span className="font-semibold text-sm">{tool.tool_name}</span>
-                          <span className="text-xs text-neutral-400 ml-2">{tool.category}</span>
-                        </div>
+                  <div key={tool.tool_id}>
+                    <button onClick={() => setExpanded(e => ({ ...e, [tool.tool_id]: !e[tool.tool_id] }))}
+                      className="w-full flex items-center justify-between px-5 py-3 hover:bg-neutral-50 transition text-left">
+                      <div className="flex items-center gap-2">
+                        {isExp ? <ChevronDown className="h-3.5 w-3.5 text-neutral-400" /> : <ChevronRight className="h-3.5 w-3.5 text-neutral-400" />}
+                        <span className="text-sm font-semibold text-neutral-900">{tool.tool_name}</span>
+                        <span className="text-xs text-neutral-400">{tool.category}</span>
                       </div>
-                      {latestPeriod && (
-                        <div className="flex items-center gap-4 text-xs">
-                          <span className="text-neutral-500">
-                            Latest: <span className="font-medium">{latestPeriod.label}</span>
-                          </span>
-                          <span className="text-neutral-500">
-                            Opening: <span className="font-semibold text-neutral-700">{latestPeriod.opening_balance}</span>
-                          </span>
-                          <span className="text-emerald-600">
-                            +{latestPeriod.qty_supplied}
-                          </span>
-                          <span className="text-red-500">
-                            -{latestPeriod.qty_utilized}
-                          </span>
-                          <span className={`font-bold text-sm px-2 py-0.5 rounded ${
-                            latestPeriod.closing_balance <= 0 ? 'bg-red-50 text-red-700' :
-                            latestPeriod.closing_balance < 10 ? 'bg-amber-50 text-amber-700' :
+                      {latest && (
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="text-emerald-600">+{latest.qty_supplied}</span>
+                          <span className="text-rose-500">-{latest.qty_utilized}</span>
+                          <span className={`font-bold px-2 py-0.5 rounded-lg ${
+                            latest.closing_balance <= 0 ? 'bg-rose-50 text-rose-700' :
+                            latest.closing_balance < 10 ? 'bg-amber-50 text-amber-700' :
                             'bg-emerald-50 text-emerald-700'
-                          }`}>
-                            = {latestPeriod.closing_balance}
-                          </span>
+                          }`}>{latest.closing_balance}</span>
                         </div>
-                      )}
-                      {!latestPeriod && (
-                        <span className="text-xs text-neutral-400">Opening: {tool.initial_opening}</span>
                       )}
                     </button>
-
-                    {/* Expanded Period Table */}
-                    {isExpanded && periods.length > 0 && (
-                      <div className="border-t border-neutral-100 overflow-x-auto">
-                        <table className="w-full text-sm">
+                    {isExp && (tool.periods || []).length > 0 && (
+                      <div className="overflow-x-auto border-t border-neutral-50">
+                        <table className="w-full text-xs">
                           <thead className="bg-neutral-50">
                             <tr>
-                              <th className="text-left px-4 py-2.5 text-xs font-medium text-neutral-500 uppercase">Period</th>
-                              <th className="text-right px-4 py-2.5 text-xs font-medium text-neutral-500 uppercase">Opening Balance</th>
-                              <th className="text-right px-4 py-2.5 text-xs font-medium text-neutral-500 uppercase">Qty Supplied</th>
-                              <th className="text-right px-4 py-2.5 text-xs font-medium text-neutral-500 uppercase">Qty Utilized</th>
-                              <th className="text-right px-4 py-2.5 text-xs font-medium text-neutral-500 uppercase">Closing Balance</th>
+                              {['Period','Opening','In','Used','Closing'].map(h => (
+                                <th key={h} className={`px-4 py-2 text-neutral-500 font-semibold uppercase ${h==='Period'?'text-left':'text-right'}`}>{h}</th>
+                              ))}
                             </tr>
                           </thead>
                           <tbody>
-                            {/* Initial opening row if there's no first period data */}
-                            {tool.initial_opening > 0 && (
-                              <tr className="border-b border-neutral-50 bg-neutral-50/50">
-                                <td className="px-4 py-2 text-neutral-400 italic text-xs">Initial</td>
-                                <td className="px-4 py-2 text-right font-medium">{tool.initial_opening}</td>
-                                <td className="px-4 py-2 text-right text-neutral-400">—</td>
-                                <td className="px-4 py-2 text-right text-neutral-400">—</td>
-                                <td className="px-4 py-2 text-right font-medium">{tool.initial_opening}</td>
-                              </tr>
-                            )}
-                            {periods.map((p, idx) => (
-                              <tr key={idx} className="border-b border-neutral-50 hover:bg-neutral-50/50 transition">
-                                <td className="px-4 py-2.5">
-                                  <span className="font-medium text-neutral-700">{p.label}</span>
-                                  <span className="text-xs text-neutral-400 ml-2">
-                                    {new Date(p.period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    {' — '}
-                                    {new Date(p.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right">
-                                  <span className="font-medium">{p.opening_balance}</span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right">
-                                  {p.qty_supplied > 0 ? (
-                                    <span className="text-emerald-600 font-medium">+{p.qty_supplied}</span>
-                                  ) : (
-                                    <span className="text-neutral-400">0</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2.5 text-right">
-                                  {p.qty_utilized > 0 ? (
-                                    <span className="text-red-500 font-medium">-{p.qty_utilized}</span>
-                                  ) : (
-                                    <span className="text-neutral-400">0</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2.5 text-right">
-                                  <span className={`inline-block px-2 py-0.5 rounded font-bold text-sm ${
-                                    p.closing_balance <= 0 ? 'bg-red-50 text-red-700' :
+                            {tool.periods.map((p, i) => (
+                              <tr key={i} className="border-t border-neutral-50 hover:bg-neutral-50">
+                                <td className="px-4 py-2 font-medium text-neutral-700">{p.label}</td>
+                                <td className="px-4 py-2 text-right">{p.opening_balance}</td>
+                                <td className="px-4 py-2 text-right text-emerald-600 font-medium">{p.qty_supplied > 0 ? `+${p.qty_supplied}` : '—'}</td>
+                                <td className="px-4 py-2 text-right text-rose-500 font-medium">{p.qty_utilized > 0 ? `-${p.qty_utilized}` : '—'}</td>
+                                <td className="px-4 py-2 text-right">
+                                  <span className={`font-bold px-2 py-0.5 rounded text-xs ${
+                                    p.closing_balance <= 0 ? 'bg-rose-50 text-rose-700' :
                                     p.closing_balance < 10 ? 'bg-amber-50 text-amber-700' :
                                     'bg-emerald-50 text-emerald-700'
-                                  }`}>
-                                    {p.closing_balance}
-                                  </span>
+                                  }`}>{p.closing_balance}</span>
                                 </td>
                               </tr>
                             ))}
@@ -585,460 +376,234 @@ export default function MyInventoryScreen() {
                         </table>
                       </div>
                     )}
-
-                    {isExpanded && periods.length === 0 && (
-                      <div className="border-t border-neutral-100 p-6 text-center text-sm text-neutral-400">
-                        No {periodType}ly activity for {tool.tool_name} in {selectedYear}.
-                        {tool.initial_opening > 0 && (
-                          <span> Opening balance: <strong>{tool.initial_opening}</strong></span>
-                        )}
-                      </div>
-                    )}
                   </div>
                 );
               })}
             </div>
-          ) : null}
-
-          {/* Current Stock Levels Summary */}
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-            <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-              <h2 className="font-semibold">Current Stock Levels</h2>
-              <button onClick={fetchStock} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-neutral-50">
-                  <tr>
-                    <th className="text-left px-4 py-3">Tool Name</th>
-                    <th className="text-left px-4 py-3">Opening Balance</th>
-                    <th className="text-left px-4 py-3">Qty Supplied</th>
-                    <th className="text-left px-4 py-3">Qty Received</th>
-                    <th className="text-left px-4 py-3">Qty Utilized</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stock.length === 0 ? (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-neutral-400">No stock records found</td></tr>
-                  ) : stock.map((s) => (
-                    <tr key={s.tool_id} className="border-t border-neutral-100">
-                      <td className="px-4 py-3 font-medium">{s.tool_name || '—'}</td>
-                      <td className="px-4 py-3">{s.opening_balance ?? 0}</td>
-                      <td className="px-4 py-3">{s.qty_supplied ?? 0}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min="0"
-                            value={editReceived[s.tool_id] !== undefined ? editReceived[s.tool_id] : (s.qty_received ?? 0)}
-                            onChange={e => setEditReceived(prev => ({ ...prev, [s.tool_id]: e.target.value }))}
-                            className="border border-neutral-300 rounded px-2 py-1 w-24 text-sm bg-white"
-                          />
-                          <button
-                            onClick={async () => {
-                              const val = parseInt(editReceived[s.tool_id] !== undefined ? editReceived[s.tool_id] : s.qty_received);
-                              if (isNaN(val) || val < 0) { push('Enter a valid non-negative number', 'error'); return; }
-                              setSavingReceived(prev => ({ ...prev, [s.tool_id]: true }));
-                              try {
-                                await api.updateQtyReceived(s.tool_id, val);
-                                push('Qty Received updated', 'success');
-                                setEditReceived(prev => { const n = { ...prev }; delete n[s.tool_id]; return n; });
-                                fetchStock();
-                              } catch (e) {
-                                push(e.message, 'error');
-                              } finally {
-                                setSavingReceived(prev => ({ ...prev, [s.tool_id]: false }));
-                              }
-                            }}
-                            disabled={savingReceived[s.tool_id]}
-                            className="bg-emerald-600 text-white text-xs px-2 py-1 rounded hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            {savingReceived[s.tool_id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-semibold">{s.qty_utilized ?? 0}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* ---------- DISTRIBUTE VIEW ---------- */}
-      {view === 'distribute' && !loading && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-            <h2 className="font-semibold mb-4 flex items-center gap-2">
-              <ArrowRightLeft className="h-4 w-4" /> Distribute to Department
-            </h2>
-            <form onSubmit={handleDistribute} className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Tool Name</label>
-                <ToolSearchInput
-                  value={distToolName}
-                  onChange={setDistToolName}
-                  placeholder="Search tool name..."
-                  toolsList={toolsList}
-                  loadingTools={toolsLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Department</label>
-                <select
-                  value={distDepartment}
-                  onChange={e => setDistDepartment(e.target.value)}
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-44 bg-white"
-                  required
-                >
-                  <option value="">Select department...</option>
-                  {DEPARTMENTS.map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Quantity</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={distQuantity}
-                  onChange={e => setDistQuantity(e.target.value)}
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-24 bg-white"
-                />
-              </div>
-              <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700">
-                Distribute
-              </button>
-            </form>
-          </div>
-
-          {/* Facility-to-Facility Transfer */}
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-            <h2 className="font-semibold mb-4 flex items-center gap-2">
-              <ArrowRightLeft className="h-4 w-4" /> Transfer to Another Facility
-            </h2>
-            <form onSubmit={handleFacilityTransfer} className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Tool Name</label>
-                <ToolSearchInput
-                  value={transferToolName}
-                  onChange={setTransferToolName}
-                  placeholder="Search tool name..."
-                  toolsList={toolsList}
-                  loadingTools={toolsLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Target Facility</label>
-                <select
-                  value={transferToFacility}
-                  onChange={e => setTransferToFacility(e.target.value)}
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-48 bg-white"
-                  required
-                >
-                  <option value="">Select facility...</option>
-                  {facilities.map(f => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Quantity</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={transferQuantity}
-                  onChange={e => setTransferQuantity(e.target.value)}
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-24 bg-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Notes</label>
-                <input
-                  type="text"
-                  value={transferNotes}
-                  onChange={e => setTransferNotes(e.target.value)}
-                  placeholder="Optional"
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-40 bg-white"
-                />
-              </div>
-              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
-                Transfer
-              </button>
-            </form>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-            <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-              <h2 className="font-semibold">Distribution History</h2>
-              <button onClick={fetchDistributions} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-neutral-50">
-                  <tr>
-                    <th className="text-left px-4 py-3">Date</th>
-                    <th className="text-left px-4 py-3">Tool Name</th>
-                    <th className="text-left px-4 py-3">Department</th>
-                    <th className="text-left px-4 py-3">Qty</th>
-                    <th className="text-left px-4 py-3">Unit</th>
-                    <th className="text-left px-4 py-3">Issued By</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {distributions.length === 0 ? (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-neutral-400">No distributions recorded</td></tr>
-                  ) : distributions.map((d) => (
-                    <tr key={d.id} className="border-t border-neutral-100">
-                      <td className="px-4 py-3 text-xs">{new Date(d.created_at || d.date).toLocaleString()}</td>
-                      <td className="px-4 py-3">{d.tool_name || d.tool_id || '—'}</td>
-                      <td className="px-4 py-3 capitalize">{d.department || d.basic_unit || '—'}</td>
-                      <td className="px-4 py-3 font-semibold">{d.quantity}</td>
-                      <td className="px-4 py-3 text-neutral-500">{d.basic_unit || 'unit'}</td>
-                      <td className="px-4 py-3 text-neutral-500">{d.issued_by || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Incoming Transfers */}
-          {incomingTransfers.length > 0 && (
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-              <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-                <h2 className="font-semibold">Incoming Transfers</h2>
-                <button onClick={fetchTransfers} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                  <RefreshCw className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-neutral-50">
-                    <tr>
-                      <th className="text-left px-4 py-3">Date</th>
-                      <th className="text-left px-4 py-3">From</th>
-                      <th className="text-left px-4 py-3">Tool</th>
-                      <th className="text-left px-4 py-3">Qty</th>
-                      <th className="text-left px-4 py-3">Status</th>
-                      <th className="text-left px-4 py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {incomingTransfers.map(t => (
-                      <tr key={t.id} className="border-t border-neutral-100">
-                        <td className="px-4 py-3 text-xs">{new Date(t.created_at).toLocaleDateString()}</td>
-                        <td className="px-4 py-3">{t.from_facility}</td>
-                        <td className="px-4 py-3">{t.tool_name}</td>
-                        <td className="px-4 py-3 font-semibold">{t.quantity}</td>
-                        <td className="px-4 py-3">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            t.status === 'pending' ? 'bg-amber-100 text-amber-700' :
-                            t.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' :
-                            'bg-red-100 text-red-700'
-                          }`}>{t.status}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          {t.status === 'pending' && (
-                            <div className="flex gap-1">
-                              <button
-                                onClick={async () => { try { await api.acceptTransfer(t.id); push('Transfer accepted', 'success'); fetchTransfers(); fetchStock(); } catch(e) { push(e.message, 'error'); } }}
-                                className="bg-emerald-600 text-white text-xs px-2 py-1 rounded hover:bg-emerald-700"
-                              >Accept</button>
-                              <button
-                                onClick={async () => { try { await api.rejectTransfer(t.id); push('Transfer rejected', 'success'); fetchTransfers(); } catch(e) { push(e.message, 'error'); } }}
-                                className="bg-red-500 text-white text-xs px-2 py-1 rounded hover:bg-red-600"
-                              >Reject</button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Outgoing Transfers */}
-          {outgoingTransfers.length > 0 && (
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-              <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-                <h2 className="font-semibold">Outgoing Transfers</h2>
-                <button onClick={fetchTransfers} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                  <RefreshCw className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-neutral-50">
-                    <tr>
-                      <th className="text-left px-4 py-3">Date</th>
-                      <th className="text-left px-4 py-3">To</th>
-                      <th className="text-left px-4 py-3">Tool</th>
-                      <th className="text-left px-4 py-3">Qty</th>
-                      <th className="text-left px-4 py-3">Status</th>
-                      <th className="text-left px-4 py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {outgoingTransfers.map(t => (
-                      <tr key={t.id} className="border-t border-neutral-100">
-                        <td className="px-4 py-3 text-xs">{new Date(t.created_at).toLocaleDateString()}</td>
-                        <td className="px-4 py-3">{t.to_facility}</td>
-                        <td className="px-4 py-3">{t.tool_name}</td>
-                        <td className="px-4 py-3 font-semibold">{t.quantity}</td>
-                        <td className="px-4 py-3">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            t.status === 'pending' ? 'bg-amber-100 text-amber-700' :
-                            t.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' :
-                            t.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                            'bg-neutral-100 text-neutral-600'
-                          }`}>{t.status}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          {t.status === 'pending' && (
-                            <button
-                              onClick={async () => { try { await api.cancelTransfer(t.id); push('Transfer cancelled', 'success'); fetchTransfers(); fetchStock(); } catch(e) { push(e.message, 'error'); } }}
-                              className="bg-neutral-500 text-white text-xs px-2 py-1 rounded hover:bg-neutral-600"
-                            >Cancel</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* ---------- PHYSICAL COUNTS VIEW ---------- */}
-      {view === 'counts' && !loading && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-            <h2 className="font-semibold mb-4 flex items-center gap-2">
-              <ClipboardCheck className="h-4 w-4" /> Record Physical Count
-            </h2>
-            <form onSubmit={handlePhysicalCount} className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Tool Name</label>
-                <ToolSearchInput
-                  value={countToolName}
-                  onChange={setCountToolName}
-                  placeholder="Search tool name..."
-                  toolsList={toolsList}
-                  loadingTools={toolsLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1">Actual Count</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={countQuantity}
-                  onChange={e => setCountQuantity(e.target.value)}
-                  className="border border-neutral-300 rounded-lg px-3 py-2 text-sm w-32 bg-white"
-                />
-              </div>
-              <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700">
-                Submit Count
-              </button>
-            </form>
-          </div>
+// ─── History section ──────────────────────────────────────────────────────────
 
-          <div className="bg-white rounded-2xl shadow border border-neutral-200 overflow-hidden">
-            <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-              <h2 className="font-semibold">Physical Count History</h2>
-              <button onClick={fetchCounts} className="p-1.5 hover:bg-neutral-100 rounded-lg" title="Refresh">
-                <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-neutral-50">
-                  <tr>
-                    <th className="text-left px-4 py-3">Date</th>
-                    <th className="text-left px-4 py-3">Tool Name</th>
-                    <th className="text-left px-4 py-3">System Qty</th>
-                    <th className="text-left px-4 py-3">Actual Count</th>
-                    <th className="text-left px-4 py-3">Variance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {counts.length === 0 ? (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-neutral-400">No physical counts recorded</td></tr>
-                  ) : counts.map((c) => {
-                    const variance = (c.physical_count || 0) - (c.system_quantity || 0);
-                    return (
-                      <tr key={c.id} className="border-t border-neutral-100">
-                        <td className="px-4 py-3 text-xs">{new Date(c.created_at || c.date).toLocaleString()}</td>
-                        <td className="px-4 py-3">{c.tool_name || c.tool_id || '—'}</td>
-                        <td className="px-4 py-3">{c.system_quantity || 0}</td>
-                        <td className="px-4 py-3 font-semibold">{c.physical_count || 0}</td>
-                        <td className={`px-4 py-3 font-medium ${variance < 0 ? 'text-red-600' : variance > 0 ? 'text-emerald-600' : 'text-neutral-500'}`}>
-                          {variance > 0 ? '+' : ''}{variance}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+function HistorySection() {
+  const { push } = useToast();
+  const [open, setOpen] = useState(false);
+  const [usage, setUsage] = useState([]);
+  const [dists, setDists] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [u, d] = await Promise.all([api.myUtilization(), api.myDistributions()]);
+      setUsage(Array.isArray(u) ? u : []);
+      setDists(Array.isArray(d) ? d : []);
+    } catch (e) { push(e.message, 'error'); }
+    finally { setLoading(false); }
+  }, [push]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  // Merge and sort newest-first
+  const feed = [
+    ...(usage.map(u => ({ type: 'usage', date: u.date_used, tool: u.tool_name, qty: u.quantity_used, note: '' }))),
+    ...(dists.map(d => ({ type: 'dist', date: d.created_at || d.date, tool: d.tool_name || '—', qty: d.quantity, note: d.department || '' }))),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 30);
+
+  return (
+    <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-50 transition">
+        <div className="flex items-center gap-2.5">
+          <History className="h-5 w-5 text-slate-500" />
+          <span className="font-bold text-sm text-neutral-900">Recent Activity</span>
+          <span className="text-xs text-neutral-400">— usage & distributions</span>
         </div>
-      )}
+        {open ? <ChevronDown className="h-4 w-4 text-neutral-400" /> : <ChevronRight className="h-4 w-4 text-neutral-400" />}
+      </button>
 
-      {/* ---------- SUMMARY VIEW ---------- */}
-      {view === 'summary' && !loading && summary && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-              <p className="text-xs text-neutral-500 uppercase tracking-wide">Total Tools</p>
-              <p className="text-2xl font-bold mt-1">{summary.total_tools || 0}</p>
-            </div>
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-              <p className="text-xs text-neutral-500 uppercase tracking-wide">Total Stock Qty</p>
-              <p className="text-2xl font-bold mt-1">{summary.total_stock_qty || 0}</p>
-            </div>
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-              <p className="text-xs text-neutral-500 uppercase tracking-wide">Low Stock Items</p>
-              <p className={`text-2xl font-bold mt-1 ${(summary.low_stock || 0) > 0 ? 'text-amber-600' : ''}`}>
-                {summary.low_stock || 0}
-              </p>
-            </div>
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-              <p className="text-xs text-neutral-500 uppercase tracking-wide">Out of Stock</p>
-              <p className={`text-2xl font-bold mt-1 ${(summary.out_of_stock || 0) > 0 ? 'text-red-600' : ''}`}>
-                {summary.out_of_stock || 0}
-              </p>
-            </div>
-          </div>
-
-          {/* Facilities summary */}
-          {summary.facilities && summary.facilities.length > 0 && (
-            <div className="bg-white rounded-2xl shadow border border-neutral-200 p-5">
-              <h2 className="font-semibold mb-3">My Facility Stock</h2>
-              <div className="space-y-2">
-                {summary.facilities.map((f, i) => (
-                  <div key={i} className="flex items-center justify-between border-b border-neutral-100 pb-2 last:border-0 last:pb-0">
-                    <span className="text-sm font-medium">{f.name}</span>
-                    <span className="text-sm text-neutral-600">{f.stock_count} items</span>
+      {open && (
+        <div className="border-t border-neutral-100">
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-neutral-400"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…</div>
+          ) : feed.length === 0 ? (
+            <div className="py-10 text-center text-sm text-neutral-400">No activity recorded yet.</div>
+          ) : (
+            <div className="divide-y divide-neutral-50">
+              {feed.map((item, i) => (
+                <div key={i} className="flex items-center gap-3 px-5 py-3">
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    item.type === 'usage' ? 'bg-rose-100' : 'bg-blue-100'
+                  }`}>
+                    {item.type === 'usage'
+                      ? <TrendingDown className="h-3.5 w-3.5 text-rose-600" />
+                      : <ArrowRightLeft className="h-3.5 w-3.5 text-blue-600" />
+                    }
                   </div>
-                ))}
-              </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-semibold text-neutral-900">{item.tool}</span>
+                    <span className={`text-xs ml-2 font-bold ${item.type === 'usage' ? 'text-rose-600' : 'text-blue-600'}`}>
+                      -{item.qty}
+                    </span>
+                    {item.note && <span className="text-xs text-neutral-400 ml-1">→ {item.note}</span>}
+                    <p className="text-xs text-neutral-400">
+                      {item.type === 'usage' ? 'Used' : 'Distributed'}
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-neutral-400 flex-shrink-0">
+                    {item.date ? new Date(item.date).toLocaleDateString() : '—'}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function MyInventoryScreen() {
+  const { push } = useToast();
+  const [stock, setStock] = useState([]);
+  const [stockLoading, setStockLoading] = useState(true);
+  const [toolsList, setToolsList] = useState([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [modal, setModal] = useState(null); // 'usage' | 'distribute' | 'count' | null
+  const [stockSearch, setStockSearch] = useState('');
+
+  const loadStock = useCallback(async () => {
+    setStockLoading(true);
+    try { setStock(await api.myStock()); }
+    catch (e) { push(e.message, 'error'); }
+    finally { setStockLoading(false); }
+  }, [push]);
+
+  const loadTools = useCallback(async () => {
+    setToolsLoading(true);
+    try { const d = await api.tools(); setToolsList(Array.isArray(d) ? d : []); }
+    catch {}
+    finally { setToolsLoading(false); }
+  }, []);
+
+  useEffect(() => { loadStock(); loadTools(); }, [loadStock, loadTools]);
+
+  const filteredStock = (stock || []).filter(s =>
+    !stockSearch || (s.tool_name || '').toLowerCase().includes(stockSearch.toLowerCase())
+  );
+
+  const outOfStock = filteredStock.filter(s => (s.qty_received ?? 0) - (s.qty_utilized ?? 0) <= 0).length;
+  const lowStock   = filteredStock.filter(s => { const q = (s.qty_received ?? 0) - (s.qty_utilized ?? 0); return q > 0 && q < 10; }).length;
+
+  return (
+    <div className="space-y-5 pb-8">
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-2xl bg-emerald-600 text-white grid place-items-center shadow-lg shadow-emerald-200">
+            <Package className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-neutral-900">My Inventory</h1>
+            <p className="text-sm text-neutral-500">Track your facility's tools and record activity</p>
+          </div>
+        </div>
+        <button onClick={loadStock} className="p-2 hover:bg-neutral-100 rounded-xl text-neutral-500 mt-1" title="Refresh stock">
+          <RefreshCw className={`h-4 w-4 ${stockLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {/* ── Quick alerts ── */}
+      {(outOfStock > 0 || lowStock > 0) && (
+        <div className="flex flex-wrap gap-2">
+          {outOfStock > 0 && (
+            <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+              <AlertTriangle className="h-4 w-4 text-rose-500 flex-shrink-0" />
+              <span className="text-xs font-semibold text-rose-700">{outOfStock} tool{outOfStock > 1 ? 's' : ''} out of stock</span>
+            </div>
+          )}
+          {lowStock > 0 && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
+              <span className="text-xs font-semibold text-amber-700">{lowStock} tool{lowStock > 1 ? 's' : ''} running low</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 3 Action buttons ── */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { mode: 'usage',      label: 'Record Usage',       sub: 'We used or consumed tools',  Icon: TrendingDown,    bg: 'bg-rose-50',   border: 'border-rose-200',   icon: 'text-rose-600',   btn: 'bg-rose-600 hover:bg-rose-700' },
+          { mode: 'distribute', label: 'Distribute',         sub: 'Send to a department',       Icon: ArrowRightLeft,  bg: 'bg-blue-50',   border: 'border-blue-200',   icon: 'text-blue-600',   btn: 'bg-blue-600 hover:bg-blue-700' },
+          { mode: 'count',      label: 'Physical Count',     sub: 'Count what is on the shelf', Icon: ClipboardList,   bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-600', btn: 'bg-violet-600 hover:bg-violet-700' },
+        ].map(({ mode, label, sub, Icon, bg, border, icon, btn }) => (
+          <button key={mode} onClick={() => setModal(mode)}
+            className={`${bg} ${border} border rounded-2xl p-4 text-left hover:shadow-md hover:-translate-y-0.5 transition group flex flex-col gap-2`}>
+            <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${btn.split(' ')[0]} group-hover:scale-105 transition`}>
+              <Icon className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-neutral-900">{label}</p>
+              <p className="text-xs text-neutral-500 mt-0.5 leading-tight">{sub}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Current stock grid ── */}
+      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between gap-3">
+          <h2 className="font-bold text-neutral-900 text-sm">Current Stock</h2>
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400" />
+            <input
+              type="text"
+              value={stockSearch}
+              onChange={e => setStockSearch(e.target.value)}
+              placeholder="Search tools…"
+              className="w-full pl-8 pr-3 py-1.5 text-sm border border-neutral-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            />
+          </div>
+        </div>
+
+        {stockLoading ? (
+          <div className="flex items-center justify-center py-12 text-neutral-400">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading stock…
+          </div>
+        ) : filteredStock.length === 0 ? (
+          <div className="py-12 text-center text-sm text-neutral-400">
+            <Package className="h-10 w-10 text-neutral-200 mx-auto mb-3" />
+            {stockSearch ? 'No tools match your search' : 'No stock yet — stock updates automatically when you confirm a delivery'}
+          </div>
+        ) : (
+          <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {filteredStock.map(s => <StockCard key={s.tool_id} item={s} />)}
+          </div>
+        )}
+      </div>
+
+      {/* ── Collapsible: Trends ── */}
+      <TrendsSection toolsList={toolsList} />
+
+      {/* ── Collapsible: History ── */}
+      <HistorySection />
+
+      {/* ── Modal ── */}
+      {modal && (
+        <ActionModal
+          mode={modal}
+          toolsList={toolsList}
+          toolsLoading={toolsLoading}
+          onClose={() => setModal(null)}
+          onDone={() => { setModal(null); loadStock(); }}
+        />
       )}
     </div>
   );

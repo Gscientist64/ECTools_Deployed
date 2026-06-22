@@ -1,6 +1,7 @@
 # backend/models.py
+import json
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, CheckConstraint
 from flask_login import UserMixin
 from extensions import db
 
@@ -59,11 +60,16 @@ class ToolCategory(db.Model):
 class Tool(db.Model):
     __tablename__ = 'tool'
 
-    id          = db.Column(db.Integer, primary_key=True)
-    name        = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.String(500), nullable=True)
-    quantity    = db.Column(db.Integer, nullable=False, default=0)
-    category_id = db.Column(db.Integer, db.ForeignKey('tool_category.id'))
+    id                  = db.Column(db.Integer, primary_key=True)
+    name                = db.Column(db.String(200), nullable=False)
+    description         = db.Column(db.String(500), nullable=True)
+    quantity            = db.Column(db.Integer, nullable=False, default=0)
+    category_id         = db.Column(db.Integer, db.ForeignKey('tool_category.id'))
+    low_stock_threshold = db.Column(db.Integer, nullable=True, default=None)
+
+    __table_args__ = (
+        CheckConstraint('quantity >= 0', name='ck_tool_quantity_nonneg'),
+    )
 
     # relationships
     requested_tool = db.relationship('RequestedTool', back_populates='tool', cascade="all, delete-orphan")
@@ -74,7 +80,11 @@ class Tool(db.Model):
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "category": self.category.name if self.category else None
+            "quantity": self.quantity,
+            "low_stock_threshold": self.low_stock_threshold,
+            "is_low_stock": (self.low_stock_threshold is not None and self.quantity <= self.low_stock_threshold),
+            "category": self.category.name if self.category else None,
+            "category_id": self.category_id,
         }
 
     @property
@@ -275,8 +285,12 @@ class FacilityStock(db.Model):
     opening_balance = db.Column(db.Integer, nullable=False, default=0)
     qty_received    = db.Column(db.Integer, nullable=False, default=0)
 
-    # composite unique constraint: one row per tool per facility
-    __table_args__ = (db.UniqueConstraint('tool_id', 'facility', name='uq_tool_facility'),)
+    __table_args__ = (
+        db.UniqueConstraint('tool_id', 'facility', name='uq_tool_facility'),
+        CheckConstraint('quantity >= 0', name='ck_facility_stock_quantity_nonneg'),
+        CheckConstraint('opening_balance >= 0', name='ck_facility_stock_opening_nonneg'),
+        CheckConstraint('qty_received >= 0', name='ck_facility_stock_qty_received_nonneg'),
+    )
 
     tool = db.relationship('Tool', backref='facility_stocks')
 
@@ -305,6 +319,10 @@ class DepartmentDistribution(db.Model):
     distributed_by  = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     date_distributed = db.Column(db.DateTime, default=datetime.utcnow)
     notes           = db.Column(db.String(300), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint('quantity >= 0', name='ck_dept_dist_quantity_nonneg'),
+    )
 
     tool = db.relationship('Tool', backref='department_distributions')
     distributor = db.relationship('Users', foreign_keys=[distributed_by])
@@ -417,3 +435,60 @@ class NotificationRead(db.Model):
     read_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (db.UniqueConstraint('user_id', 'delivery_id', name='uq_user_delivery_read'),)
+
+
+# ---------- Audit Log ----------
+class AuditLog(db.Model):
+    __tablename__ = 'audit_log'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    action      = db.Column(db.String(120), nullable=False)
+    entity_type = db.Column(db.String(50),  nullable=True)
+    entity_id   = db.Column(db.Integer,     nullable=True)
+    details     = db.Column(db.Text,        nullable=True)  # JSON string
+    ip_address  = db.Column(db.String(50),  nullable=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+
+    actor = db.relationship('Users', foreign_keys=[user_id], backref='audit_logs')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "actor": self.actor.first_name if self.actor else "System",
+            "actor_username": self.actor.username if self.actor else None,
+            "actor_facility": self.actor.facility if self.actor else None,
+            "actor_role": self.actor.roles if self.actor else None,
+            "action": self.action,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "details": json.loads(self.details) if self.details else None,
+            "ip_address": self.ip_address,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------- Request Comment ----------
+class RequestComment(db.Model):
+    __tablename__ = 'request_comment'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=False)
+    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'),   nullable=False)
+    message    = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    author  = db.relationship('Users',   foreign_keys=[user_id])
+    request = db.relationship('Request', backref='comments')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "user_id": self.user_id,
+            "author": self.author.first_name if self.author else "Unknown",
+            "author_role": self.author.roles if self.author else None,
+            "message": self.message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

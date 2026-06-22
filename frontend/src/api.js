@@ -317,6 +317,20 @@ export const api = {
     return asJson(r);
   },
 
+  async confirmRequestDelivery(requestId, witnessedBy, basicUnit, actualQtys) {
+    const r = await fetch(withApi(`/delivery/confirm-request/${requestId}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        witnessed_by: witnessedBy,
+        basic_unit: basicUnit,
+        actual_quantities: actualQtys || {},
+      }),
+    });
+    return asJson(r);
+  },
+
   async generateDeliveryNote(deliveryId) {
     const r = await fetch(withApi(`/delivery/generate-note/${deliveryId}`), {
       method: 'POST',
@@ -449,6 +463,22 @@ export const api = {
     return asJson(r);
   },
 
+  // ---------- Utilization ----------
+  async recordUtilization(payload) {
+    const r = await fetch(withApi('/inventory/record-utilization'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    return asJson(r);
+  },
+
+  async myUtilization() {
+    const r = await fetch(withApi('/inventory/my-utilization'), { credentials: 'include' });
+    return asJson(r);
+  },
+
   // ---------- Admin Inventory ----------
   async adminDashboardSummary() {
     const r = await fetch(withApi('/admin/dashboard-summary'), { credentials: 'include' });
@@ -511,5 +541,104 @@ export const api = {
   async listConfirmedDeliveryNotes() {
     const r = await fetch(withApi('/delivery/confirmed'), { credentials: 'include' });
     return asJson(r);
+  },
+
+  async getDeliveryNotePreview(requestId) {
+    const r = await fetch(withApi(`/delivery/preview/${requestId}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async downloadRequestDeliveryNote(requestId) {
+    const r = await fetch(withApi(`/delivery/generate-request-note/${requestId}`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.blob();
+  },
+
+  // ---------- Audit Log ----------
+  async getAuditLog(params = {}) {
+    const q = new URLSearchParams(params).toString();
+    const r = await fetch(withApi(`/admin/audit-log${q ? `?${q}` : ''}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  // ---------- Request Comments ----------
+  async getRequestComments(reqId) {
+    const r = await fetch(withApi(`/requests/${reqId}/comments`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async addRequestComment(reqId, message) {
+    const r = await fetch(withApi(`/requests/${reqId}/comments`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ message }),
+    });
+    return asJson(r);
+  },
+
+  // ---------- Batch Approve / Reject ----------
+  async batchApproveRequests(ids) {
+    const r = await fetch(withApi('/admin/requests/batch-approve'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ids }),
+    });
+    return asJson(r);
+  },
+
+  async batchRejectRequests(ids, reason = '') {
+    const r = await fetch(withApi('/admin/requests/batch-reject'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ids, reason }),
+    });
+    return asJson(r);
+  },
+
+  // ---------- Low Stock ----------
+  async getLowStock(threshold) {
+    const q = threshold !== undefined ? `?threshold=${threshold}` : '';
+    const r = await fetch(withApi(`/admin/low-stock${q}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async setToolThreshold(toolId, low_stock_threshold) {
+    const r = await fetch(withApi(`/tools/${toolId}/threshold`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ low_stock_threshold }),
+    });
+    return asJson(r);
+  },
+
+  // ---------- Facility Dashboard ----------
+  async facilityDashboard() {
+    const r = await fetch(withApi('/facility/dashboard'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  // ---------- Admin Dashboard ----------
+  async adminDashboard() {
+    const r = await fetch(withApi('/admin/dashboard-summary'), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  // ---------- Monthly Consumption Report ----------
+  async getMonthlyConsumption(year, month) {
+    const r = await fetch(withApi(`/reports/monthly-consumption?year=${year}&month=${month}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async downloadMonthlyConsumption(year, month) {
+    const r = await fetch(withApi(`/reports/monthly-consumption/download?year=${year}&month=${month}`), { credentials: 'include' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.blob();
   },
 };
