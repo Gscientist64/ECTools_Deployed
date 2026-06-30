@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import { fmtDate, fmtDateTime } from './utils';
 import {
   Search, ClipboardList, Minus, Plus, Send, CheckCircle,
   Download, PackageCheck, ChevronDown, ShoppingCart, X,
@@ -577,7 +578,7 @@ export default function RequestScreen() {
                       <StatusBadge status={r.status} />
                     </div>
                     <div className="text-[11px] text-neutral-400 flex-shrink-0">
-                      {r.date_requested ? new Date(r.date_requested).toLocaleDateString() : ''}
+                      {fmtDate(r.date_requested)}
                     </div>
                   </button>
 
@@ -638,12 +639,12 @@ export default function RequestScreen() {
                         {/* metadata */}
                         {(r.status === 'Approved' && r.date_approved) && (
                           <p className="text-[11px] text-neutral-400">
-                            Approved {new Date(r.date_approved).toLocaleString()}
+                            Approved {fmtDateTime(r.date_approved)}
                           </p>
                         )}
                         {(r.status === 'Rejected' && r.date_rejected) && (
                           <p className="text-[11px] text-rose-500">
-                            Rejected {new Date(r.date_rejected).toLocaleString()}
+                            Rejected {fmtDateTime(r.date_rejected)}
                             {r.rejection_reason ? ` — ${r.rejection_reason}` : ''}
                           </p>
                         )}

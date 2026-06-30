@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDateTime } from './utils';
 import { PackageCheck, Pencil, Trash2, ListOrdered, Layers, RefreshCw } from 'lucide-react';
 import { Input, Button, Select } from './ui';
 
@@ -291,7 +292,7 @@ export function ToolsScreen() {
                 <div className="md:col-span-3 text-sm">{l.user_name || '—'}</div>
                 <div className="md:col-span-2 text-sm font-semibold">{l.quantity}</div>
                 <div className="md:col-span-2 text-xs text-neutral-600">
-                  {l.date ? new Date(l.date).toLocaleString() : '—'}
+                  {fmtDateTime(l.date)}
                 </div>
               </div>
             ))}

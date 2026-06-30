@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
 import { useAuth } from './auth';
+import { fmtDate } from './utils';
 import { FileText, Download, Search, ChevronDown, ChevronRight, Package, CheckCircle, Eye, X, MapPin, User } from 'lucide-react';
 
 export default function DeliveryNotesScreen() {
@@ -124,7 +125,7 @@ export default function DeliveryNotesScreen() {
               </div>
               <div>
                 <span className="text-neutral-500 text-xs uppercase tracking-wide">Date</span>
-                <p className="font-semibold">{new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                <p className="font-semibold">{fmtDate(new Date().toISOString())}</p>
               </div>
             </div>
           </div>
@@ -283,11 +284,7 @@ export default function DeliveryNotesScreen() {
                     </span>
                   )}
                   <span>
-                    {n.delivery_confirmed_at
-                      ? new Date(n.delivery_confirmed_at).toLocaleDateString()
-                      : n.delivery_date
-                        ? new Date(n.delivery_date).toLocaleDateString()
-                        : '—'}
+                    {fmtDate(n.delivery_confirmed_at || n.delivery_date)}
                   </span>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleView(n.request_id); }}

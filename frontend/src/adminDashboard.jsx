@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDate } from './utils';
 import {
   LayoutGrid, Users, Package, ClipboardList, Warehouse, RefreshCw,
   Clock, CheckCircle, AlertTriangle, TrendingUp, ArrowRight,
@@ -159,7 +160,7 @@ export default function AdminDashboard({ onNavigate }) {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                     <span className="text-[11px] text-neutral-400">
-                      {r.date_requested ? new Date(r.date_requested).toLocaleDateString() : '—'}
+                      {fmtDate(r.date_requested)}
                     </span>
                     <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 bg-amber-100 text-amber-700 ring-amber-200">
                       <Clock className="h-3 w-3" /> Pending

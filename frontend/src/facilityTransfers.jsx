@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDate } from './utils';
 import {
   ArrowRightLeft, ArrowRight, ArrowLeft, Plus, X, RefreshCcw,
   Check, Clock, AlertCircle, CheckCircle, XCircle, Search,
@@ -38,10 +39,16 @@ function InitiateModal({ tools, onClose, onDone }) {
   const { push } = useToast();
   const [form, setForm] = useState({ tool_id: '', quantity: 1, to_facility: '', notes: '' });
   const [facilities, setFacilities] = useState([]);
+  const [myStockMap, setMyStockMap] = useState({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api.adminFacilities().then(d => setFacilities(Array.isArray(d) ? d : d.facilities || [])).catch(() => {});
+    api.myStock().then(data => {
+      const map = {};
+      (Array.isArray(data) ? data : []).forEach(s => { map[s.tool_id] = s.quantity ?? 0; });
+      setMyStockMap(map);
+    }).catch(() => {});
   }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -90,7 +97,7 @@ function InitiateModal({ tools, onClose, onDone }) {
             >
               <option value="">Select tool…</option>
               {tools.map(t => (
-                <option key={t.id} value={t.id}>{t.name} (stock: {t.quantity ?? '?'})</option>
+                <option key={t.id} value={t.id}>{t.name} (my stock: {myStockMap[t.id] ?? 0})</option>
               ))}
             </select>
           </div>

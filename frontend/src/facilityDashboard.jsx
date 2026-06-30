@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDate } from './utils';
 import {
   ClipboardList, Package, CheckCircle, Clock, Warehouse,
   ArrowRightLeft, AlertTriangle, RefreshCcw, TrendingUp,
@@ -201,7 +202,7 @@ export default function FacilityDashboard({ onNavigate }) {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-[10px] text-neutral-400">
-                      {r.date_requested ? new Date(r.date_requested).toLocaleDateString() : ''}
+                      {fmtDate(r.date_requested)}
                     </span>
                     <StatusChip status={r.status} />
                   </div>

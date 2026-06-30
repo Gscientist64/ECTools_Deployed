@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDate } from './utils';
 import {
   Package, ArrowRightLeft, ClipboardList, Loader2, RefreshCw, Search,
   TrendingDown, ChevronDown, X, Check, AlertTriangle, Plus, Minus,
@@ -8,12 +9,18 @@ import {
 } from 'lucide-react';
 
 const DEPARTMENTS = [
-  { value: 'pharmacy',  label: 'Pharmacy'  },
-  { value: 'lab',       label: 'Lab'       },
-  { value: 'triage',    label: 'Triage'    },
-  { value: 'community', label: 'Community' },
-  { value: 'm&e',       label: 'M&E'       },
-  { value: 'others',    label: 'Others'    },
+  { value: 'pharmacy',   label: 'Pharmacy'          },
+  { value: 'lab',        label: 'Lab'               },
+  { value: 'triage',     label: 'Triage'            },
+  { value: 'community',  label: 'Community'         },
+  { value: 'm&e',        label: 'M&E'               },
+  { value: 'eye_clinic', label: 'Eye Clinic'        },
+  { value: 'blood_bank', label: 'Blood Bank'        },
+  { value: 'tb_dots',    label: 'TB Dots'           },
+  { value: 'pmtct',      label: 'PMTCT'             },
+  { value: 'paediatric', label: 'Paediatric Clinic' },
+  { value: 'opd_gopd',   label: 'OPD/GOPD'         },
+  { value: 'others',     label: 'Others'            },
 ];
 
 // ─── Tool picker with search ──────────────────────────────────────────────────
@@ -100,16 +107,16 @@ function ActionModal({ mode, toolsList, toolsLoading, onClose, onDone }) {
 
   const config = {
     usage: {
-      title: 'Record Usage',
+      title: 'Record Tools Utilization',
       icon: TrendingDown,
       iconBg: 'bg-rose-500',
-      description: 'How many did your facility consume or use today?',
+      description: 'Enter the quantity used',
       qtyLabel: 'Quantity used',
-      submitLabel: 'Record Usage',
+      submitLabel: 'Record Tools Utilization',
       submitColor: 'bg-rose-600 hover:bg-rose-700',
     },
     distribute: {
-      title: 'Distribute to Department',
+      title: 'Distribute to SDP/Unit/Dept',
       icon: ArrowRightLeft,
       iconBg: 'bg-blue-500',
       description: 'Send tools from your store to a department.',
@@ -225,9 +232,9 @@ function ActionModal({ mode, toolsList, toolsLoading, onClose, onDone }) {
 // ─── Stock card ───────────────────────────────────────────────────────────────
 
 function StockCard({ item }) {
-  const qty = (item.qty_received ?? 0) - (item.qty_utilized ?? 0);
+  const qty = item.quantity ?? 0;
+  const isLow = qty > 0 && qty < 10;
   const isOut = qty <= 0;
-  const isLow = !isOut && qty < 10;
 
   return (
     <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${
@@ -237,9 +244,6 @@ function StockCard({ item }) {
     }`}>
       <div className="flex items-start justify-between gap-2">
         <span className="text-sm font-semibold text-neutral-900 leading-tight">{item.tool_name}</span>
-        {isOut && (
-          <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-200 text-rose-700 uppercase tracking-wide">Out</span>
-        )}
         {isLow && (
           <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-700 uppercase tracking-wide">Low</span>
         )}
@@ -455,7 +459,7 @@ function HistorySection() {
                     </p>
                   </div>
                   <span className="text-[11px] text-neutral-400 flex-shrink-0">
-                    {item.date ? new Date(item.date).toLocaleDateString() : '—'}
+                    {fmtDate(item.date)}
                   </span>
                 </div>
               ))}
@@ -494,12 +498,15 @@ export default function MyInventoryScreen() {
 
   useEffect(() => { loadStock(); loadTools(); }, [loadStock, loadTools]);
 
-  const filteredStock = (stock || []).filter(s =>
+  // Only show tools that have ever been received (have a stock record)
+  const activeStock = (stock || []).filter(s => (s.qty_received ?? 0) > 0 || (s.quantity ?? 0) > 0 || (s.opening_balance ?? 0) > 0);
+
+  const filteredStock = activeStock.filter(s =>
     !stockSearch || (s.tool_name || '').toLowerCase().includes(stockSearch.toLowerCase())
   );
 
-  const outOfStock = filteredStock.filter(s => (s.qty_received ?? 0) - (s.qty_utilized ?? 0) <= 0).length;
-  const lowStock   = filteredStock.filter(s => { const q = (s.qty_received ?? 0) - (s.qty_utilized ?? 0); return q > 0 && q < 10; }).length;
+  const outOfStock = filteredStock.filter(s => (s.quantity ?? 0) <= 0).length;
+  const lowStock   = filteredStock.filter(s => { const q = s.quantity ?? 0; return q > 0 && q < 10; }).length;
 
   return (
     <div className="space-y-5 pb-8">
@@ -540,8 +547,8 @@ export default function MyInventoryScreen() {
       {/* ── 3 Action buttons ── */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { mode: 'usage',      label: 'Record Usage',       sub: 'We used or consumed tools',  Icon: TrendingDown,    bg: 'bg-rose-50',   border: 'border-rose-200',   icon: 'text-rose-600',   btn: 'bg-rose-600 hover:bg-rose-700' },
-          { mode: 'distribute', label: 'Distribute',         sub: 'Send to a department',       Icon: ArrowRightLeft,  bg: 'bg-blue-50',   border: 'border-blue-200',   icon: 'text-blue-600',   btn: 'bg-blue-600 hover:bg-blue-700' },
+          { mode: 'usage',      label: 'Record Tools Utilization', sub: 'Enter the quantity used', Icon: TrendingDown,    bg: 'bg-rose-50',   border: 'border-rose-200',   icon: 'text-rose-600',   btn: 'bg-rose-600 hover:bg-rose-700' },
+          { mode: 'distribute', label: 'Distribute to SDP/Unit/Dept', sub: 'Send to a department', Icon: ArrowRightLeft,  bg: 'bg-blue-50',   border: 'border-blue-200',   icon: 'text-blue-600',   btn: 'bg-blue-600 hover:bg-blue-700' },
           { mode: 'count',      label: 'Physical Count',     sub: 'Count what is on the shelf', Icon: ClipboardList,   bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-600', btn: 'bg-violet-600 hover:bg-violet-700' },
         ].map(({ mode, label, sub, Icon, bg, border, icon, btn }) => (
           <button key={mode} onClick={() => setModal(mode)}

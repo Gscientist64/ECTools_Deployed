@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
 import { useAuth } from './auth';
+import { fmtDate } from './utils';
 import { Package, Plus, Trash2, X, ChevronDown, ChevronRight, Search } from 'lucide-react';
 
 export default function StockReceiptsScreen() {
@@ -356,7 +357,7 @@ export default function StockReceiptsScreen() {
                 </div>
                 <div className="flex items-center gap-4 text-xs text-neutral-500">
                   <span>{r.supplied_from}</span>
-                  <span>{r.received_date ? new Date(r.received_date).toLocaleDateString() : '—'}</span>
+                  <span>{fmtDate(r.received_date)}</span>
                   <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
                     className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4" /></button>
                 </div>
@@ -366,11 +367,11 @@ export default function StockReceiptsScreen() {
               {expandedId === r.id && (
                 <div className="border-t px-5 py-4 space-y-2 text-sm">
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <div><span className="text-neutral-500">Date Supplied:</span> {r.date_supplied ? new Date(r.date_supplied).toLocaleDateString() : '—'}</div>
+                    <div><span className="text-neutral-500">Date Supplied:</span> {fmtDate(r.date_supplied)}</div>
                     <div><span className="text-neutral-500">Supplied From:</span> {r.supplied_from}</div>
                     <div><span className="text-neutral-500">Supplied By:</span> {r.supplied_by}</div>
                     <div><span className="text-neutral-500">Received By:</span> {r.received_by_name || `User #${r.received_by}`}</div>
-                    <div><span className="text-neutral-500">Received Date:</span> {r.received_date ? new Date(r.received_date).toLocaleDateString() : '—'}</div>
+                    <div><span className="text-neutral-500">Received Date:</span> {fmtDate(r.received_date)}</div>
                     <div><span className="text-neutral-500">Notes:</span> {r.notes || '—'}</div>
                   </div>
 

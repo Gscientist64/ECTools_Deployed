@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDate, fmtDateTime } from './utils';
 import {
   Check, X, Pencil, Trash2, RefreshCcw, Shield, ChevronDown,
   AlertTriangle, PackageCheck, Clock, CheckCircle, AlertCircle,
@@ -256,7 +257,7 @@ function CommentsPanel({ requestId }) {
                     <div className="flex items-center gap-1.5 mb-1">
                       <span className="font-semibold text-neutral-800">{c.author}</span>
                       {isAdmin && <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 rounded-full">Admin</span>}
-                      <span className="text-neutral-400 ml-auto">{c.created_at ? new Date(c.created_at).toLocaleString() : ''}</span>
+                      <span className="text-neutral-400 ml-auto">{fmtDateTime(c.created_at)}</span>
                     </div>
                     <p className="text-neutral-700">{c.message}</p>
                   </div>
@@ -617,7 +618,7 @@ function RequestsTab({ onNeedRefresh }) {
                     <div>
                       <div className="text-sm font-bold text-neutral-900">#{r.id}</div>
                       <div className="text-[11px] text-neutral-400">
-                        {r.date_requested ? new Date(r.date_requested).toLocaleDateString() : ''}
+                        {fmtDate(r.date_requested)}
                       </div>
                     </div>
                   </button>

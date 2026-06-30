@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from './api';
 import { useToast } from './toasts';
+import { fmtDateTime } from './utils';
 import {
   ShieldCheck, RefreshCcw, ChevronLeft, ChevronRight, Search,
   CheckCircle, XCircle, MessageSquare, Package, User, Settings,
@@ -152,9 +153,7 @@ export default function AuditLogScreen() {
                 {items.map(item => (
                   <tr key={item.id} className="hover:bg-neutral-50 transition-colors">
                     <td className="px-4 py-3 text-[11px] text-neutral-400 whitespace-nowrap">
-                      {item.created_at
-                        ? new Date(item.created_at).toLocaleString()
-                        : '—'}
+                      {fmtDateTime(item.created_at)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
