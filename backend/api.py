@@ -3544,6 +3544,14 @@ def notification_stream():
     user_id = current_user.id
 
     def event_stream():
+        # Release the DB connection immediately — the SSE loop does no DB work.
+        # This prevents Aiven's idle-connection timeout from killing the connection
+        # while the stream is open, which would cause a crash on teardown rollback.
+        try:
+            db.session.remove()
+        except Exception:
+            pass
+
         q = queue.Queue()
         connection_queues[user_id] = q
         try:
@@ -3555,6 +3563,8 @@ def notification_stream():
                 except queue.Empty:
                     yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
         except GeneratorExit:
+            pass
+        finally:
             connection_queues.pop(user_id, None)
 
     return Response(
