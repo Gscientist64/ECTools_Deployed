@@ -1300,7 +1300,7 @@ def admin_dashboard_summary():
     total_users = Users.query.count()
     total_stock = db.session.query(func.sum(FacilityStock.quantity)).scalar() or 0
 
-    # Approved requests not yet fully delivered
+    # Approved requests not yet confirmed by facilities (status stays "Approved" until facility confirms)
     approved_awaiting = RequestModel.query.filter(func.lower(RequestModel.status) == "approved").count()
 
     # Low stock: tools with quantity = 0 across any facility
@@ -1382,6 +1382,56 @@ def admin_facility_stock(facility_name):
         "stocks": [s.to_dict() for s in stocks],
         "distributions": [d.to_dict() for d in distributions]
     }), 200
+
+
+@api_bp.route("/inventory/stocktake", methods=["GET"])
+@login_required
+def stocktake_summary():
+    """All tools with system qty and latest physical count per tool — for stocktake reconciliation."""
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+
+    tools = Tool.query.options(joinedload(Tool.category)).order_by(Tool.name.asc()).all()
+    stocks = FacilityStock.query.filter_by(facility=facility).all()
+    stock_map = {s.tool_id: s for s in stocks}
+
+    # Latest physical count per tool (subquery)
+    subq = (
+        db.session.query(
+            PhysicalStockCount.tool_id,
+            func.max(PhysicalStockCount.counted_at).label("latest")
+        )
+        .filter(PhysicalStockCount.facility == facility)
+        .group_by(PhysicalStockCount.tool_id)
+        .subquery()
+    )
+    latest_counts = (
+        db.session.query(PhysicalStockCount)
+        .join(subq, (PhysicalStockCount.tool_id == subq.c.tool_id) &
+              (PhysicalStockCount.counted_at == subq.c.latest))
+        .filter(PhysicalStockCount.facility == facility)
+        .all()
+    )
+    count_map = {c.tool_id: c for c in latest_counts}
+
+    result = []
+    for t in tools:
+        s = stock_map.get(t.id)
+        system_qty = s.quantity if s else 0
+        pc = count_map.get(t.id)
+        result.append({
+            "tool_id": t.id,
+            "tool_name": t.name,
+            "category": t.category.name if t.category else "Uncategorized",
+            "system_qty": system_qty,
+            "physical_qty": pc.physical_quantity if pc else None,
+            "variance": (pc.physical_quantity - system_qty) if pc else None,
+            "last_counted": pc.counted_at.isoformat() if pc else None,
+            "has_discrepancy": (pc.physical_quantity != system_qty) if pc else False,
+        })
+
+    return jsonify(result), 200
 
 
 @api_bp.route("/admin/facility/<path:facility_name>/physical-counts", methods=["GET"])
@@ -2514,6 +2564,9 @@ def confirm_request_delivery(request_id):
                     qty_received=qty,
                 )
                 db.session.add(fs)
+
+    # Mark the request as Delivered now that the facility has confirmed receipt
+    request_obj.status = "Delivered"
 
     _audit("confirm_delivery", "request", request_id, {"items": len(approved_lines), "facility": facility})
     db.session.commit()

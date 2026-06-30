@@ -5,7 +5,7 @@ import { fmtDate } from './utils';
 import {
   Package, ArrowRightLeft, ClipboardList, Loader2, RefreshCw, Search,
   TrendingDown, ChevronDown, X, Check, AlertTriangle, Plus, Minus,
-  History, BarChart2, ChevronRight, ChevronLeft, Calendar,
+  History, BarChart2, ChevronRight, ChevronLeft, Calendar, Scale,
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -233,6 +233,10 @@ function ActionModal({ mode, toolsList, toolsLoading, onClose, onDone }) {
 
 function StockCard({ item }) {
   const qty = item.quantity ?? 0;
+  const received = item.qty_received ?? 0;
+  // Used = everything that left the balance (usage + distribution + transfers out)
+  // Derived so that: Used + Balance = Received always holds
+  const used = Math.max(0, received - qty);
   const isLow = qty > 0 && qty < 10;
   const isOut = qty <= 0;
 
@@ -252,8 +256,8 @@ function StockCard({ item }) {
         {qty}
       </div>
       <div className="text-[11px] text-neutral-400 space-y-0.5">
-        <div>Received: <span className="font-semibold text-neutral-600">{item.qty_received ?? 0}</span></div>
-        <div>Used: <span className="font-semibold text-neutral-600">{item.qty_utilized ?? 0}</span></div>
+        <div>Received: <span className="font-semibold text-neutral-600">{received}</span></div>
+        <div>Used: <span className="font-semibold text-neutral-600">{used}</span></div>
       </div>
     </div>
   );
@@ -471,6 +475,153 @@ function HistorySection() {
   );
 }
 
+// ─── Stocktake / Reconciliation section ──────────────────────────────────────
+
+function StocktakeSection({ stock }) {
+  const { push } = useToast();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [counts, setCounts] = useState({});   // tool_id → draft input value
+  const [saving, setSaving] = useState({});   // tool_id → bool
+  const [discrepancyOnly, setDiscrepancyOnly] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await api.myStocktake();
+      setData(Array.isArray(d) ? d : []);
+    } catch (e) { push(e.message || 'Failed to load stocktake', 'error'); }
+    finally { setLoading(false); }
+  }, [push]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const submitCount = async (toolId, toolName) => {
+    const val = counts[toolId];
+    if (val === '' || val === undefined || val === null) return;
+    const qty = parseInt(val, 10);
+    if (isNaN(qty) || qty < 0) { push('Enter a valid quantity', 'error'); return; }
+    setSaving(s => ({ ...s, [toolId]: true }));
+    try {
+      await api.recordPhysicalCount({ tool_id: toolId, physical_quantity: qty });
+      push(`Count saved for ${toolName}`, 'success');
+      setCounts(c => { const n = { ...c }; delete n[toolId]; return n; });
+      load();
+    } catch (e) { push(e.message || 'Failed to save count', 'error'); }
+    finally { setSaving(s => ({ ...s, [toolId]: false })); }
+  };
+
+  const rows = (data || []).filter(r => !discrepancyOnly || r.has_discrepancy);
+
+  return (
+    <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-50 transition">
+        <div className="flex items-center gap-2.5">
+          <Scale className="h-5 w-5 text-violet-500" />
+          <span className="font-bold text-sm text-neutral-900">Stocktake / Reconciliation</span>
+          <span className="text-xs text-neutral-400">— compare physical count vs system</span>
+        </div>
+        {open ? <ChevronDown className="h-4 w-4 text-neutral-400" /> : <ChevronRight className="h-4 w-4 text-neutral-400" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-neutral-100">
+          {/* Controls */}
+          <div className="flex items-center gap-3 px-5 py-3 border-b border-neutral-50">
+            <label className="flex items-center gap-2 text-xs text-neutral-600 cursor-pointer select-none">
+              <input type="checkbox" className="accent-violet-600"
+                checked={discrepancyOnly}
+                onChange={e => setDiscrepancyOnly(e.target.checked)} />
+              Show discrepancies only
+            </label>
+            <button onClick={load} className="ml-auto text-xs text-neutral-400 hover:text-neutral-700 flex items-center gap-1">
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-neutral-400">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="py-10 text-center text-sm text-neutral-400">
+              {discrepancyOnly ? 'No discrepancies found — all counts match!' : 'No tools found.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-neutral-50 text-neutral-500 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-semibold">Tool</th>
+                    <th className="px-4 py-2.5 text-right font-semibold">System Qty</th>
+                    <th className="px-4 py-2.5 text-right font-semibold">Last Count</th>
+                    <th className="px-4 py-2.5 text-right font-semibold">Variance</th>
+                    <th className="px-4 py-2.5 text-left font-semibold">Last Counted</th>
+                    <th className="px-4 py-2.5 text-center font-semibold">Enter Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-50">
+                  {rows.map(r => {
+                    const variance = r.variance;
+                    const draft = counts[r.tool_id];
+                    const isDirty = draft !== undefined && draft !== '';
+                    return (
+                      <tr key={r.tool_id} className={`hover:bg-neutral-50 transition ${r.has_discrepancy ? 'bg-rose-50/40' : ''}`}>
+                        <td className="px-4 py-2.5">
+                          <div className="font-semibold text-neutral-800">{r.tool_name}</div>
+                          <div className="text-neutral-400">{r.category}</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-bold text-neutral-900">{r.system_qty}</td>
+                        <td className="px-4 py-2.5 text-right font-semibold">
+                          {r.physical_qty !== null ? r.physical_qty : <span className="text-neutral-300">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-bold">
+                          {variance === null ? (
+                            <span className="text-neutral-300">—</span>
+                          ) : variance === 0 ? (
+                            <span className="text-emerald-600">✓ 0</span>
+                          ) : variance > 0 ? (
+                            <span className="text-amber-600">+{variance}</span>
+                          ) : (
+                            <span className="text-rose-600">{variance}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-neutral-400">
+                          {r.last_counted ? fmtDate(r.last_counted) : <span className="text-neutral-300">Never</span>}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5 justify-center">
+                            <input
+                              type="number" min="0"
+                              placeholder={r.system_qty}
+                              value={draft ?? ''}
+                              onChange={e => setCounts(c => ({ ...c, [r.tool_id]: e.target.value }))}
+                              className="w-16 text-center text-xs border border-neutral-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                            />
+                            <button
+                              onClick={() => submitCount(r.tool_id, r.tool_name)}
+                              disabled={!isDirty || saving[r.tool_id]}
+                              className="flex items-center gap-0.5 text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white px-2 py-1.5 rounded-lg disabled:opacity-30 transition"
+                            >
+                              {saving[r.tool_id] ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function MyInventoryScreen() {
@@ -498,10 +649,7 @@ export default function MyInventoryScreen() {
 
   useEffect(() => { loadStock(); loadTools(); }, [loadStock, loadTools]);
 
-  // Only show tools that have ever been received (have a stock record)
-  const activeStock = (stock || []).filter(s => (s.qty_received ?? 0) > 0 || (s.quantity ?? 0) > 0 || (s.opening_balance ?? 0) > 0);
-
-  const filteredStock = activeStock.filter(s =>
+  const filteredStock = (stock || []).filter(s =>
     !stockSearch || (s.tool_name || '').toLowerCase().includes(stockSearch.toLowerCase())
   );
 
@@ -601,6 +749,9 @@ export default function MyInventoryScreen() {
 
       {/* ── Collapsible: History ── */}
       <HistorySection />
+
+      {/* ── Collapsible: Stocktake ── */}
+      <StocktakeSection stock={stock} />
 
       {/* ── Modal ── */}
       {modal && (

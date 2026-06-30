@@ -463,6 +463,11 @@ export const api = {
     return asJson(r);
   },
 
+  async myStocktake() {
+    const r = await fetch(withApi('/inventory/stocktake'), { credentials: 'include' });
+    return asJson(r);
+  },
+
   // ---------- Utilization ----------
   async recordUtilization(payload) {
     const r = await fetch(withApi('/inventory/record-utilization'), {
