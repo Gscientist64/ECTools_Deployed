@@ -1384,6 +1384,61 @@ def admin_facility_stock(facility_name):
     }), 200
 
 
+@api_bp.route("/admin/facility/<path:facility_name>/inventory", methods=["GET"])
+@login_required
+def admin_facility_inventory(facility_name):
+    """Admin: full inventory view for a facility — all tools with qty_received, qty_utilized, balance.
+    Mirrors my_facility_stock() but accessible by admins for any facility."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    facility = facility_name
+    stocks = FacilityStock.query.filter_by(facility=facility).all()
+    stock_map = {s.tool_id: s for s in stocks}
+
+    tools = Tool.query.options(joinedload(Tool.category)).order_by(Tool.name.asc()).all()
+
+    qty_distributed_rows = (
+        db.session.query(
+            DepartmentDistribution.tool_id,
+            func.coalesce(func.sum(DepartmentDistribution.quantity), 0).label("total")
+        )
+        .filter(DepartmentDistribution.facility == facility)
+        .group_by(DepartmentDistribution.tool_id)
+        .all()
+    )
+    qty_distributed_map = {r.tool_id: int(r.total) for r in qty_distributed_rows}
+
+    qty_used_rows = (
+        db.session.query(
+            ToolUsage.tool_id,
+            func.coalesce(func.sum(ToolUsage.quantity_used), 0).label("total")
+        )
+        .join(Users, ToolUsage.user_id == Users.id)
+        .filter(Users.facility == facility)
+        .group_by(ToolUsage.tool_id)
+        .all()
+    )
+    qty_used_map = {r.tool_id: int(r.total) for r in qty_used_rows}
+
+    result = []
+    for t in tools:
+        s = stock_map.get(t.id)
+        qty_utilized = qty_distributed_map.get(t.id, 0) + qty_used_map.get(t.id, 0)
+        result.append({
+            "tool_id": t.id,
+            "tool_name": t.name,
+            "category": t.category.name if t.category else "Uncategorized",
+            "quantity": s.quantity if s else 0,
+            "opening_balance": s.opening_balance if s else 0,
+            "qty_received": s.qty_received if s else 0,
+            "qty_utilized": qty_utilized,
+            "facility_stock_id": s.id if s else None,
+        })
+
+    return jsonify({"facility": facility_name, "tools": result}), 200
+
+
 @api_bp.route("/inventory/stocktake", methods=["GET"])
 @login_required
 def stocktake_summary():

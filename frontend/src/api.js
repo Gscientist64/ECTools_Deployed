@@ -500,6 +500,11 @@ export const api = {
     return asJson(r);
   },
 
+  async adminFacilityInventory(facilityName) {
+    const r = await fetch(withApi(`/admin/facility/${encodeURIComponent(facilityName)}/inventory`), { credentials: 'include' });
+    return asJson(r);
+  },
+
   async adminFacilityPhysicalCounts(facilityName) {
     const r = await fetch(withApi(`/admin/facility/${encodeURIComponent(facilityName)}/physical-counts`), { credentials: 'include' });
     return asJson(r);

@@ -8,7 +8,7 @@ import Login from './Login';
 import {
   PackageCheck, ClipboardList, Users, Settings, BarChart3,
   FileText, Warehouse, PackageOpen, ArrowRightLeft,
-  ShieldCheck, LayoutGrid, TrendingUp,
+  ShieldCheck, LayoutGrid, TrendingUp, Building2,
 } from 'lucide-react';
 import RequestScreen from './requests';
 import AdminScreen from './admin';
@@ -25,6 +25,7 @@ import FacilityDashboard from './facilityDashboard';
 import FacilityTransfersScreen from './facilityTransfers';
 import AuditLogScreen from './auditLog';
 import AdminDashboard from './adminDashboard';
+import FacilityStocksScreen from './facilityStocks';
 
 
 const SidebarItem = ({ icon: Icon, label, active, onClick, badge }) => (
@@ -124,6 +125,7 @@ function Shell() {
               <SidebarItem icon={TrendingUp}      label="Tools Forecast"   active={tab==='forecast'}       onClick={() => go('forecast', true)} />
               <SidebarItem icon={FileText}        label="Reports"          active={tab==='reports'}        onClick={() => go('reports', true)} />
               <SidebarItem icon={Users}           label="Users"            active={tab==='staff'}          onClick={() => go('staff', true)} />
+              <SidebarItem icon={Building2}       label="Facility Stocks"  active={tab==='facilitystocks'} onClick={() => go('facilitystocks', true)} />
               <SidebarItem icon={PackageOpen}     label="Delivery Receipts" active={tab==='stockreceipts'} onClick={() => go('stockreceipts', true)} />
               <SidebarItem icon={ArrowRightLeft}  label="Transfers"        active={tab==='transfers'}      onClick={() => go('transfers', true)} />
               <SidebarItem icon={ShieldCheck}     label="Audit Log"        active={tab==='auditlog'}       onClick={() => go('auditlog', true)} />
@@ -151,6 +153,7 @@ function Shell() {
           {tab === 'forecast'        && (isAdmin ? <ToolsForecastScreen /> : null)}
           {tab === 'reports'         && (isAdmin ? <ReportsScreen /> : null)}
           {tab === 'staff'           && (isAdmin ? <StaffScreen /> : null)}
+          {tab === 'facilitystocks'  && (isAdmin ? <FacilityStocksScreen /> : null)}
           {tab === 'stockreceipts'   && (isAdmin ? <StockReceiptsScreen /> : null)}
           {tab === 'auditlog'        && (isAdmin ? <AuditLogScreen /> : null)}
           {tab === 'admin'           && (isAdmin ? <AdminScreen /> : null)}
