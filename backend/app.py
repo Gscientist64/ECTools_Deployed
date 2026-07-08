@@ -86,6 +86,18 @@ def create_app():
     # --- API under /api ---
     app.register_blueprint(api_bp, url_prefix="/api")
 
+    # --- Global DB error handler ---
+    # Catches connection-pool exhaustion and dead-connection errors so users get
+    # a readable 503 instead of a raw 500 when the free-tier DB is under load.
+    from sqlalchemy.exc import OperationalError, TimeoutError as SATimeoutError
+    @app.errorhandler(OperationalError)
+    def handle_db_operational(e):
+        return jsonify({"error": "Database temporarily unavailable. Please try again in a few seconds."}), 503
+
+    @app.errorhandler(SATimeoutError)
+    def handle_db_timeout(e):
+        return jsonify({"error": "Server is busy. Please try again in a few seconds."}), 503
+
     # --- Helpers for SPA ---
     def _dist_exists() -> bool:
         index_path = os.path.join(DIST_FOLDER, "index.html")
@@ -210,7 +222,7 @@ if __name__ == "__main__":
 
     from waitress import serve
     try:
-        serve(app, host="127.0.0.1", port=PORT, threads=8)
+        serve(app, host="127.0.0.1", port=PORT, threads=12)
     except Exception as exc:
         _msgbox("EC Tools — Server Error", str(exc))
         sys.exit(1)

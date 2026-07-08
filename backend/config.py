@@ -52,13 +52,15 @@ class Config:
 
     SQLALCHEMY_DATABASE_URI = _normalize_db_url(DATABASE_URL)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Aiven free tier allows ~25 total connections (system overhead uses ~5).
+    # Keep pool_size + max_overflow well under 20 so concurrent users don't exhaust the limit.
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,
-        "pool_recycle": 300,
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_timeout": 30,
-        "echo_pool": False,
+        "pool_pre_ping":  True,   # test connections before use to catch dead ones early
+        "pool_recycle":   180,    # recycle connections every 3 min (Aiven drops idle after ~5 min)
+        "pool_size":      5,      # keep 5 persistent connections in the pool
+        "max_overflow":   10,     # allow up to 10 extra burst connections (15 total max)
+        "pool_timeout":   10,     # fail fast if no connection available after 10s
+        "echo_pool":      False,
     }
 
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
