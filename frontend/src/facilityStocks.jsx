@@ -44,7 +44,7 @@ function ToolStockCard({ item }) {
     <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${
       isOut ? 'bg-rose-50 border-rose-200' :
       isLow ? 'bg-amber-50 border-amber-200' :
-      'bg-white border-neutral-200'
+      'bg-emerald-50 border-emerald-200'
     }`}>
       <div className="flex items-start justify-between gap-2">
         <span className="text-sm font-semibold text-neutral-900 leading-tight">{item.tool_name}</span>
