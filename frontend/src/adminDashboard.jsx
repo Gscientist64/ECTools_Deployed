@@ -83,8 +83,18 @@ export default function AdminDashboard({ onNavigate }) {
       </div>
 
       {/* Action banners */}
-      {(s.pending_requests > 0 || s.approved_awaiting > 0 || s.low_stock_count > 0) && (
+      {(s.pending_requests > 0 || s.approved_awaiting > 0 || s.pending_concerns > 0) && (
         <div className="space-y-2">
+          {s.pending_concerns > 0 && (
+            <div onClick={() => onNavigate?.('admin')}
+              className="flex items-center gap-3 bg-rose-600 border border-rose-700 rounded-2xl px-4 py-3 cursor-pointer hover:bg-rose-700 transition shadow-md shadow-rose-200">
+              <AlertTriangle className="h-5 w-5 text-white flex-shrink-0 animate-pulse" />
+              <p className="text-sm font-semibold text-white flex-1">
+                CRITICAL: <strong>{s.pending_concerns}</strong> facility delivery concern{s.pending_concerns !== 1 ? 's' : ''} need{s.pending_concerns === 1 ? 's' : ''} your review
+              </p>
+              <ArrowRight className="h-4 w-4 text-white/70 flex-shrink-0" />
+            </div>
+          )}
           {s.pending_requests > 0 && (
             <div onClick={() => onNavigate?.('admin')}
               className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 cursor-pointer hover:bg-amber-100 transition">
@@ -103,16 +113,6 @@ export default function AdminDashboard({ onNavigate }) {
                 <strong>{s.approved_awaiting}</strong> approved request{s.approved_awaiting !== 1 ? 's' : ''} awaiting delivery confirmation from facilities
               </p>
               <ArrowRight className="h-4 w-4 text-sky-400 flex-shrink-0" />
-            </div>
-          )}
-          {s.low_stock_count > 0 && (
-            <div onClick={() => onNavigate?.('admin')}
-              className="flex items-center gap-3 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3 cursor-pointer hover:bg-rose-100 transition">
-              <AlertTriangle className="h-5 w-5 text-rose-500 flex-shrink-0" />
-              <p className="text-sm font-medium text-rose-800 flex-1">
-                <strong>{s.low_stock_count}</strong> facility stock record{s.low_stock_count !== 1 ? 's' : ''} at zero — review Low Stock
-              </p>
-              <ArrowRight className="h-4 w-4 text-rose-400 flex-shrink-0" />
             </div>
           )}
         </div>

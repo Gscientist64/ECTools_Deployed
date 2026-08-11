@@ -6,6 +6,7 @@ import {
   Package, ArrowRightLeft, ClipboardList, Loader2, RefreshCw, Search,
   TrendingDown, ChevronDown, X, Check, AlertTriangle, Plus, Minus,
   History, BarChart2, ChevronRight, ChevronLeft, Calendar, Scale,
+  Download,
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -536,9 +537,22 @@ function StocktakeSection({ stock }) {
                 onChange={e => setDiscrepancyOnly(e.target.checked)} />
               Show discrepancies only
             </label>
-            <button onClick={load} className="ml-auto text-xs text-neutral-400 hover:text-neutral-700 flex items-center gap-1">
-              <RefreshCw className="h-3 w-3" /> Refresh
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await api.exportPhysicalCounts();
+                    push('Export downloaded', 'success');
+                  } catch (e) { push(e.message || 'Export failed', 'error'); }
+                }}
+                className="text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 transition"
+              >
+                <Download className="h-3 w-3" /> Export to Excel
+              </button>
+              <button onClick={load} className="text-xs text-neutral-400 hover:text-neutral-700 flex items-center gap-1">
+                <RefreshCw className="h-3 w-3" /> Refresh
+              </button>
+            </div>
           </div>
 
           {loading ? (

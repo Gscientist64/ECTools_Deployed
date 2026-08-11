@@ -8,7 +8,9 @@ import {
   AlertTriangle, PackageCheck, Clock, CheckCircle, AlertCircle,
   Download, Building2, User, Calendar, Inbox, Search,
   MessageSquare, Send, Square, CheckSquare, Layers, Bell, Sliders,
+  Settings
 } from 'lucide-react';
+import SupervisorManagement from './SupervisorManagement';
 
 // ─── primitives ───────────────────────────────────────────────────────────────
 
@@ -770,6 +772,203 @@ function RequestsTab({ onNeedRefresh }) {
   );
 }
 
+// ─── Delivery Concerns tab ────────────────────────────────────────────────────
+
+function DeliveryConcernsTab({ onCountChange }) {
+  const { push } = useToast();
+  const [concerns, setConcerns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [rejectModal, setRejectModal] = useState(null); // concern object
+  const [rejectNote, setRejectNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('pending');
+
+  const load = async (sf = statusFilter) => {
+    setLoading(true);
+    try {
+      const data = await api.listDeliveryConcerns(sf);
+      const list = Array.isArray(data) ? data : [];
+      setConcerns(list);
+      onCountChange?.(list.filter(c => c.status === 'pending').length);
+    } catch (e) {
+      push(e.message || 'Failed to load concerns', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [statusFilter]);
+
+  const handleAccept = async (concern) => {
+    if (!window.confirm(`Accept concern for Request #${concern.request_id}? The facility's reported quantities will be recorded and their stock updated.`)) return;
+    setSubmitting(true);
+    try {
+      await api.acceptDeliveryConcern(concern.id);
+      push('Concern accepted — stock updated and facility notified', 'success');
+      load();
+    } catch (e) {
+      push(e.message || 'Failed to accept', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setSubmitting(true);
+    try {
+      await api.rejectDeliveryConcern(rejectModal.id, rejectNote);
+      push('Concern rejected — facility notified to confirm original quantities', 'success');
+      setRejectModal(null);
+      setRejectNote('');
+      load();
+    } catch (e) {
+      push(e.message || 'Failed to reject', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const statusColor = s =>
+    s === 'pending'  ? 'bg-amber-100 text-amber-800' :
+    s === 'accepted' ? 'bg-emerald-100 text-emerald-700' :
+    'bg-rose-100 text-rose-700';
+
+  return (
+    <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="flex items-center gap-2">
+        {['pending', 'accepted', 'rejected', 'all'].map(s => (
+          <button key={s}
+            onClick={() => setStatusFilter(s)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition capitalize ${
+              statusFilter === s ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+        <button onClick={() => load()} className="ml-auto p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500">
+          <RefreshCcw className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="py-16 text-center text-neutral-400 text-sm">Loading concerns…</div>
+      ) : concerns.length === 0 ? (
+        <div className="py-16 text-center text-neutral-400 text-sm">
+          <CheckCircle className="h-10 w-10 text-emerald-200 mx-auto mb-2" />
+          No {statusFilter !== 'all' ? statusFilter : ''} concerns
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {concerns.map(c => (
+            <div key={c.id} className={`rounded-2xl border p-4 space-y-3 ${c.status === 'pending' ? 'border-amber-300 bg-amber-50' : 'border-neutral-200 bg-white'}`}>
+              {/* Header row */}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-neutral-900">Request #{c.request_id}</span>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full capitalize ${statusColor(c.status)}`}>
+                      {c.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    {c.facility} · Raised by {c.raised_by_name} · {fmtDate(c.created_at)}
+                  </p>
+                </div>
+                {c.status === 'pending' && (
+                  <div className="flex gap-2 flex-shrink-0">
+                    <Btn color="emerald" variant="solid" size="sm" disabled={submitting} onClick={() => handleAccept(c)}>
+                      <Check className="h-3.5 w-3.5" /> Accept
+                    </Btn>
+                    <Btn color="rose" variant="ghost" size="sm" disabled={submitting}
+                      onClick={() => { setRejectModal(c); setRejectNote(''); }}>
+                      <X className="h-3.5 w-3.5" /> Reject
+                    </Btn>
+                  </div>
+                )}
+              </div>
+
+              {/* Concern note */}
+              <div className="bg-white border border-amber-200 rounded-xl px-3 py-2 text-sm text-neutral-700">
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-1">Facility's Concern</p>
+                {c.concern_note}
+              </div>
+
+              {/* Lines comparison */}
+              {(c.lines || []).length > 0 && (
+                <div className="overflow-hidden rounded-xl border border-neutral-200">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-neutral-50">
+                        <th className="text-left px-3 py-2 text-xs font-semibold text-neutral-500">Tool</th>
+                        <th className="text-center px-3 py-2 text-xs font-semibold text-neutral-500">Qty Sent</th>
+                        <th className="text-center px-3 py-2 text-xs font-semibold text-amber-600">Qty Claimed</th>
+                        <th className="text-center px-3 py-2 text-xs font-semibold text-neutral-500">Diff</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {c.lines.map((ln, i) => {
+                        const claimed = ln.claimed_qty ?? ln.sent_qty;
+                        const diff = claimed - ln.sent_qty;
+                        return (
+                          <tr key={i}>
+                            <td className="px-3 py-2 font-medium text-neutral-900">{ln.tool_name}</td>
+                            <td className="px-3 py-2 text-center text-neutral-600">{ln.sent_qty}</td>
+                            <td className={`px-3 py-2 text-center font-bold ${claimed < ln.sent_qty ? 'text-rose-600' : claimed > ln.sent_qty ? 'text-emerald-600' : 'text-neutral-600'}`}>
+                              {claimed}
+                            </td>
+                            <td className={`px-3 py-2 text-center text-xs font-semibold ${diff < 0 ? 'text-rose-500' : diff > 0 ? 'text-emerald-500' : 'text-neutral-400'}`}>
+                              {diff > 0 ? `+${diff}` : diff === 0 ? '—' : diff}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {c.status !== 'pending' && c.reviewed_by_name && (
+                <p className="text-xs text-neutral-400">
+                  {c.status === 'accepted' ? 'Accepted' : 'Rejected'} by {c.reviewed_by_name} on {fmtDate(c.reviewed_at)}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reject modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-neutral-200 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-rose-500" />
+              <h3 className="font-bold text-neutral-900 text-sm">Reject Concern</h3>
+            </div>
+            <p className="text-xs text-neutral-500">
+              The facility user will be told to confirm the original quantities that were sent.
+              Optionally add a note explaining why.
+            </p>
+            <textarea rows={3} placeholder="Optional note to facility (e.g. quantities match our dispatch records)"
+              value={rejectNote} onChange={e => setRejectNote(e.target.value)}
+              className="w-full border border-neutral-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-200 resize-none" />
+            <div className="flex gap-2">
+              <Btn color="rose" variant="solid" size="md" disabled={submitting} onClick={handleReject} className="flex-1">
+                {submitting ? 'Rejecting…' : 'Reject & Notify Facility'}
+              </Btn>
+              <Btn color="neutral" variant="ghost" size="md" onClick={() => setRejectModal(null)} className="flex-1">
+                Cancel
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Root screen ──────────────────────────────────────────────────────────────
 
 export default function AdminScreen() {
@@ -777,6 +976,7 @@ export default function AdminScreen() {
   const [mainTab, setMainTab] = useState('requests');
   const [pending, setPending] = useState([]);
   const [pendingLoading, setPendingLoading] = useState(true);
+  const [concernCount, setConcernCount] = useState(0);
 
   const loadPending = async () => {
     setPendingLoading(true);
@@ -792,7 +992,9 @@ export default function AdminScreen() {
   const TABS = [
     { id: 'requests',      label: 'Requests' },
     { id: 'confirmations', label: 'Pending Confirmations', count: pending.length },
+    { id: 'concerns',      label: 'Delivery Concerns',     count: concernCount, urgent: true },
     { id: 'lowstock',      label: 'Low Stock' },
+    { id: 'supervisors',   label: 'Supervisors' },
   ];
 
   return (
@@ -814,7 +1016,7 @@ export default function AdminScreen() {
       </div>
 
       {/* Main tabs */}
-      <div className="flex gap-1 bg-neutral-100 rounded-2xl p-1 w-fit">
+      <div className="flex flex-wrap gap-1 bg-neutral-100 rounded-2xl p-1 w-fit">
         {TABS.map(t => (
           <button key={t.id}
             onClick={() => setMainTab(t.id)}
@@ -827,6 +1029,7 @@ export default function AdminScreen() {
             {t.label}
             {t.count != null && t.count > 0 && (
               <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full leading-tight ${
+                t.urgent ? 'bg-rose-500 text-white' :
                 mainTab === t.id ? 'bg-amber-100 text-amber-700' : 'bg-neutral-200 text-neutral-600'
               }`}>
                 {t.count}
@@ -844,7 +1047,12 @@ export default function AdminScreen() {
         <PendingConfirmationsTab items={pending} loading={pendingLoading} />
       )}
 
+      {mainTab === 'concerns' && (
+        <DeliveryConcernsTab onCountChange={setConcernCount} />
+      )}
+
       {mainTab === 'lowstock' && <LowStockTab />}
+      {mainTab === 'supervisors' && <SupervisorManagement />}
     </div>
   );
 }

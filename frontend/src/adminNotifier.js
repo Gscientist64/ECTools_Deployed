@@ -16,7 +16,7 @@ export function useAdminPendingRequestNotifier({
   enabled = false,
   isAdmin = false,
   pollMs = 30000,
-  snoozeMs = 15 * 60 * 1000,
+  snoozeMs = 30 * 60 * 1000,
   soundUrl = "/notify.mp3", // put notify.mp3 in frontend/public/notify.mp3
 } = {}) {
   const { push } = useToast();

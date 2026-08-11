@@ -11,13 +11,13 @@ function Modal({ open, onClose, title, children, footer }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-neutral-200">
-        <div className="px-5 py-3 border-b border-neutral-200 flex items-center justify-between">
+      <div className="relative w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-neutral-200 max-h-[90vh] flex flex-col">
+        <div className="px-5 py-3 border-b border-neutral-200 flex items-center justify-between flex-shrink-0">
           <div className="text-sm font-semibold">{title}</div>
           <button onClick={onClose} className="text-neutral-500 text-sm">Close</button>
         </div>
-        <div className="p-5">{children}</div>
-        {footer ? <div className="px-5 pb-5">{footer}</div> : null}
+        <div className="p-5 overflow-y-auto flex-1">{children}</div>
+        {footer ? <div className="px-5 pb-5 flex-shrink-0">{footer}</div> : null}
       </div>
     </div>
   );
@@ -37,7 +37,11 @@ export function ToolsScreen() {
   // logs modal
   const [logOpen, setLogOpen] = useState(false);
   const [logTool, setLogTool] = useState(null);
-  const [logs, setLogs] = useState([]);
+  const [usages, setUsages] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [logFrom, setLogFrom] = useState('');
+  const [logTo, setLogTo] = useState('');
+  const [logTab, setLogTab] = useState('usages'); // 'usages' | 'requests'
 
   // delete modal
   const [delOpen, setDelOpen] = useState(false);
@@ -109,19 +113,14 @@ export function ToolsScreen() {
   };
 
   const onLogs = async (t) => {
+    setLogFrom('');
+    setLogTo('');
+    setLogTab('usages');
     try {
       const data = await api.toolLogs(t.id);
-  
-      // backend might return array OR object {distributions/logs}
-      const list =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.distributions) ? data.distributions :
-        Array.isArray(data?.logs) ? data.logs :
-        Array.isArray(data?.data) ? data.data :
-        [];
-  
+      setUsages(Array.isArray(data?.usages) ? data.usages : []);
+      setRequests(Array.isArray(data?.requests) ? data.requests : []);
       setLogTool(t);
-      setLogs(list);
       setLogOpen(true);
     } catch (e) {
       push(e.message || 'Failed to load logs', 'error');
@@ -274,30 +273,85 @@ export function ToolsScreen() {
       <Modal
         open={logOpen}
         onClose={() => setLogOpen(false)}
-        title={logTool ? `Distribution Logs — ${logTool.name}` : 'Distribution Logs'}
+        title={logTool ? `Tool History — ${logTool.name}` : 'Tool History'}
       >
-        {logs.length === 0 ? (
-          <div className="text-sm text-neutral-600">No distributions recorded yet.</div>
-        ) : (
-          <div className="grid gap-2">
-            <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-neutral-600">
-              <div className="col-span-5">Facility</div>
-              <div className="col-span-3">Issued To</div>
-              <div className="col-span-2">Quantity</div>
-              <div className="col-span-2">Date</div>
-            </div>
-            {logs.map(l => (
-              <div key={l.id} className="grid md:grid-cols-12 gap-2 rounded-xl border border-neutral-200 px-3 py-2">
-                <div className="md:col-span-5 text-sm">{l.facility || '—'}</div>
-                <div className="md:col-span-3 text-sm">{l.user_name || '—'}</div>
-                <div className="md:col-span-2 text-sm font-semibold">{l.quantity}</div>
-                <div className="md:col-span-2 text-xs text-neutral-600">
-                  {fmtDateTime(l.date)}
-                </div>
-              </div>
-            ))}
+        {/* Tab switcher */}
+        <div className="flex bg-neutral-100 rounded-xl p-1 mb-4">
+          <button
+            onClick={() => setLogTab('usages')}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition ${
+              logTab === 'usages' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            Utilization ({usages.length})
+          </button>
+          <button
+            onClick={() => setLogTab('requests')}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition ${
+              logTab === 'requests' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            Requests ({requests.length})
+          </button>
+        </div>
+
+        {/* Date range filter */}
+        <div className="flex flex-wrap gap-2 mb-4 p-3 bg-neutral-50 rounded-xl border border-neutral-200">
+          <div className="flex-1 min-w-[130px]">
+            <label className="block text-[10px] font-semibold text-neutral-500 uppercase tracking-wide mb-1">From</label>
+            <input type="date" value={logFrom} onChange={e => setLogFrom(e.target.value)}
+              className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-200 bg-white" />
           </div>
-        )}
+          <div className="flex-1 min-w-[130px]">
+            <label className="block text-[10px] font-semibold text-neutral-500 uppercase tracking-wide mb-1">To</label>
+            <input type="date" value={logTo} onChange={e => setLogTo(e.target.value)}
+              className="w-full text-sm border border-neutral-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-200 bg-white" />
+          </div>
+          {(logFrom || logTo) && (
+            <button onClick={() => { setLogFrom(''); setLogTo(''); }}
+              className="self-end text-xs text-neutral-500 hover:text-neutral-800 border border-neutral-200 rounded-lg px-2.5 py-1.5 bg-white hover:bg-neutral-50 transition">Clear</button>
+          )}
+        </div>
+
+        {(() => {
+          const activeList = logTab === 'usages' ? usages : requests;
+          const label = logTab === 'usages' ? 'Utilization' : 'Requests';
+          const filtered = activeList.filter(l => {
+            if (!l.date) return true;
+            const d = new Date(l.date);
+            if (logFrom && d < new Date(logFrom)) return false;
+            if (logTo && d > new Date(logTo + 'T23:59:59')) return false;
+            return true;
+          });
+
+          if (activeList.length === 0) {
+            return <div className="text-sm text-neutral-600 py-4 text-center">No {label.toLowerCase()} recorded yet.</div>;
+          }
+          if (filtered.length === 0) {
+            return <div className="text-sm text-neutral-500 py-4 text-center">No entries match the selected date range.</div>;
+          }
+          return (
+            <div className="grid gap-2">
+              <div className="hidden md:grid grid-cols-12 text-[11px] font-semibold text-neutral-500 uppercase tracking-wide px-1">
+                <div className="col-span-5">Facility / User</div>
+                <div className="col-span-3">{logTab === 'usages' ? 'Used By' : 'Requested By'}</div>
+                <div className="col-span-2">Qty</div>
+                <div className="col-span-2">Date</div>
+              </div>
+              {filtered.map(l => (
+                <div key={l.id} className="grid md:grid-cols-12 gap-2 rounded-xl border border-neutral-200 px-3 py-2 hover:bg-neutral-50 transition">
+                  <div className="md:col-span-5 text-sm">{l.facility || '—'}</div>
+                  <div className="md:col-span-3 text-sm text-neutral-600">{l.user_name || '—'}</div>
+                  <div className="md:col-span-2 text-sm font-semibold text-emerald-700">{l.quantity}</div>
+                  <div className="md:col-span-2 text-xs text-neutral-500">{fmtDateTime(l.date)}</div>
+                </div>
+              ))}
+              <div className="text-xs text-neutral-400 text-right pt-1">
+                {filtered.length} of {activeList.length} entr{activeList.length !== 1 ? 'ies' : 'y'}
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* Delete modal */}

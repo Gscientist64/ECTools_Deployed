@@ -136,6 +136,21 @@ export const api = {
     return asJson(r);
   },
 
+  async editUser(id, data) {
+    const r = await fetch(withApi(`/admin/users/${id}`), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', body: JSON.stringify(data),
+    });
+    return asJson(r);
+  },
+
+  async toggleUserStatus(id) {
+    const r = await fetch(withApi(`/admin/users/${id}/toggle-status`), {
+      method: 'POST', credentials: 'include',
+    });
+    return asJson(r);
+  },
+
   async categories() {
     const r = await fetch(withApi('/categories'), { credentials: 'include' });
     return asJson(r);
@@ -216,18 +231,26 @@ export const api = {
     return asJson(r);
   },
 
-  // ---------- Forecast ----------
+  // ---------- Forecast (legacy) ----------
   async forecastPharmacy({ file, periodDays = "30", facility = "", refillsPerBooklet = "50" }) {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("period_days", String(periodDays));
     fd.append("facility", facility || "");
     fd.append("refills_per_booklet", String(refillsPerBooklet));
+    const r = await fetch(withApi("/forecast/pharmacy"), { method: "POST", body: fd, credentials: "include" });
+    return asJson(r);
+  },
 
-    const r = await fetch(withApi("/forecast/pharmacy"), {
-      method: "POST",
-      body: fd,
-      credentials: "include",
+  // ---------- Tools Utilization ----------
+  async calculateUtilization({ radetFile, htsFile, periodStart, periodEnd }) {
+    const fd = new FormData();
+    fd.append("period_start", periodStart);
+    fd.append("period_end", periodEnd);
+    if (radetFile) fd.append("radet_file", radetFile);
+    if (htsFile)   fd.append("hts_file",   htsFile);
+    const r = await fetch(withApi("/admin/utilization/calculate"), {
+      method: "POST", body: fd, credentials: "include",
     });
     return asJson(r);
   },
@@ -327,6 +350,38 @@ export const api = {
         basic_unit: basicUnit,
         actual_quantities: actualQtys || {},
       }),
+    });
+    return asJson(r);
+  },
+
+  async raiseDeliveryConcern(requestId, concernNote, actualQtys) {
+    const r = await fetch(withApi(`/delivery/concern/${requestId}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ concern_note: concernNote, actual_quantities: actualQtys }),
+    });
+    return asJson(r);
+  },
+
+  async listDeliveryConcerns(status = 'pending') {
+    const r = await fetch(withApi(`/admin/delivery-concerns?status=${status}`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async acceptDeliveryConcern(concernId) {
+    const r = await fetch(withApi(`/admin/delivery-concerns/${concernId}/accept`), {
+      method: 'POST', credentials: 'include',
+    });
+    return asJson(r);
+  },
+
+  async rejectDeliveryConcern(concernId, rejectNote) {
+    const r = await fetch(withApi(`/admin/delivery-concerns/${concernId}/reject`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ reject_note: rejectNote || '' }),
     });
     return asJson(r);
   },
@@ -651,4 +706,42 @@ export const api = {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.blob();
   },
-};
+  // ─── NEW: Features 1-11 additions ───
+  checkStockBeforeRequest: (tool_id, quantity) =>
+    fetch(withApi('/requests/check-stock'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ tool_id, quantity }) }).then(r => r.json()),
+
+  checkDuplicateRequest: (tool_id) =>
+    fetch(withApi('/requests/check-duplicate'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ tool_id }) }).then(r => r.json()),
+
+  generateRequestDeliveryNote: (requestId) =>
+    fetch(withApi(`/delivery/generate-request-note/${requestId}`), { method: 'POST', credentials: 'include' }).then(r => { if (!r.ok) throw new Error('Download failed'); return r.blob(); }),
+
+  exportPhysicalCounts: () =>
+    fetch(withApi('/inventory/physical-counts/export'), { credentials: 'include' }).then(async r => {
+      if (!r.ok) { const err = await r.json().catch(() => ({ error: 'Export failed' })); throw new Error(err.error || 'Export failed'); }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'physical_count_export.xlsx'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    }),
+
+  checkAppUpdate: () => fetch(withApi('/app/check-update'), { credentials: 'include' }).then(r => r.json()),
+
+  listSupervisors: () => fetch(withApi('/admin/supervisors'), { credentials: 'include' }).then(r => r.json()),
+
+  createSupervisor: (data) =>
+    fetch(withApi('/admin/supervisors'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(data) }).then(r => r.json()),
+
+  updateSupervisor: (id, data) =>
+    fetch(withApi(`/admin/supervisors/${id}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(data) }).then(r => r.json()),
+
+  removeSupervisor: (id) =>
+    fetch(withApi(`/admin/supervisors/${id}`), { method: 'DELETE', credentials: 'include' }).then(r => r.json()),
+
+  getSIManagementSettings: () =>
+    fetch(withApi('/admin/settings/si-management'), { credentials: 'include' }).then(r => r.json()),
+
+  updateSIManagementSettings: (email) =>
+    fetch(withApi('/admin/settings/si-management'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ si_management_email: email }) }).then(r => r.json()),
+
+  listAllFacilities: () =>
+    fetch(withApi('/admin/facilities-list'), { credentials: 'include' }).then(r => r.json()),};

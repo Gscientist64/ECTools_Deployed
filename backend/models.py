@@ -22,6 +22,11 @@ class Users(db.Model, UserMixin):
     roles          = db.Column(db.String(50),  nullable=False, default='user')
     is_active_flag = db.Column(db.Boolean, default=True)
 
+    # Supervisor fields
+    supervisor_email = db.Column(db.String(200), nullable=True)
+    is_supervisor = db.Column(db.Boolean, default=False)
+    supervised_facilities = db.Column(db.Text, nullable=True)  # JSON list
+
     # relationships
     requests = db.relationship('Request', back_populates='user', cascade="all, delete-orphan", foreign_keys='[Request.user_id]')
     usage_records = db.relationship('ToolUsage', back_populates='user', cascade="all, delete-orphan")
@@ -491,4 +496,87 @@ class RequestComment(db.Model):
             "author_role": self.author.roles if self.author else None,
             "message": self.message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------- Delivery Concern ----------
+class DeliveryConcern(db.Model):
+    """Raised by a facility user when actual received quantities differ from what admin sent."""
+    __tablename__ = 'delivery_concern'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    request_id       = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=False)
+    raised_by        = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    facility         = db.Column(db.String(100), nullable=False)
+    concern_note     = db.Column(db.Text, nullable=False)
+    # JSON string: {str(requested_tool_id): int, ...}
+    actual_quantities = db.Column(db.Text, nullable=False, default='{}')
+    status           = db.Column(db.String(20), nullable=False, default='pending')  # pending | accepted | rejected
+    reviewed_by      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    reviewed_at      = db.Column(db.DateTime, nullable=True)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+
+    raiser   = db.relationship('Users', foreign_keys=[raised_by])
+    reviewer = db.relationship('Users', foreign_keys=[reviewed_by])
+    request  = db.relationship('Request', backref='concerns')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "facility": self.facility,
+            "raised_by_name": self.raiser.first_name if self.raiser else "Unknown",
+            "concern_note": self.concern_note,
+            "actual_quantities": json.loads(self.actual_quantities) if self.actual_quantities else {},
+            "status": self.status,
+            "reviewed_by_name": self.reviewer.first_name if self.reviewer else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------- Supervisor Action ----------
+class SupervisorAction(db.Model):
+    """Tracks supervisor and S.I Management review actions on requests."""
+    __tablename__ = 'supervisor_action'
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=False)
+    reviewer_email = db.Column(db.String(200), nullable=False)
+    reviewer_role = db.Column(db.String(50), nullable=False)  # 'facility_supervisor' or 'si_management'
+    action = db.Column(db.String(20), nullable=False)         # 'approved', 'rejected', or 'pending'
+    reason = db.Column(db.Text, nullable=True)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    request = db.relationship('Request', backref='supervisor_actions')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "reviewer_email": self.reviewer_email,
+            "reviewer_role": self.reviewer_role,
+            "action": self.action,
+            "reason": self.reason,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------- System Setting ----------
+class SystemSetting(db.Model):
+    """Key-value system settings (e.g., S.I Management email, app config)."""
+    __tablename__ = 'system_setting'
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "key": self.key,
+            "value": self.value,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

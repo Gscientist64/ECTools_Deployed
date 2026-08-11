@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_login import login_user, logout_user, current_user, login_required
 from extensions import db
-from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine, FacilityTransfer, NotificationRead, AuditLog, RequestComment
+from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine, FacilityTransfer, NotificationRead, AuditLog, RequestComment, DeliveryConcern, SupervisorAction, SystemSetting
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func, and_, case, distinct, or_, not_
 from werkzeug.utils import secure_filename
@@ -19,12 +19,14 @@ import json
 import asyncio
 import queue
 import threading
+import hashlib
+import sys
 from flask import Response, stream_with_context
 
 # PDF Generation imports
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 
@@ -313,6 +315,20 @@ def create_delivery_note_pdf(deliveries, requester, distributor, request_obj):
         }.get(raw, str(raw).capitalize())
     
     story = []
+    
+    # --- ECEWS Logo ---
+    try:
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            logo_path = os.path.join(sys._MEIPASS, "frontend", "dist", "ecews-logo.png")
+        else:
+            logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "public", "ecews-logo.png"))
+        if os.path.exists(logo_path):
+            logo = RLImage(logo_path, width=65, height=65)
+            logo.hAlign = 'CENTER'
+            story.append(logo)
+            story.append(Spacer(1, 8))
+    except Exception:
+        pass
     
     request_id = first_del.request_id if first_del else "N/A"
     story.append(Paragraph("DELIVERY NOTE", title_style))
@@ -1303,8 +1319,8 @@ def admin_dashboard_summary():
     # Approved requests not yet confirmed by facilities (status stays "Approved" until facility confirms)
     approved_awaiting = RequestModel.query.filter(func.lower(RequestModel.status) == "approved").count()
 
-    # Low stock: tools with quantity = 0 across any facility
-    low_stock_count = FacilityStock.query.filter(FacilityStock.quantity <= 0).count()
+    # Out-of-stock: admin/state-level tools where HQ stock has run to zero
+    low_stock_count = Tool.query.filter(Tool.quantity <= 0).count()
 
     # Recent pending requests (most recent 8 for quick-action list)
     recent_pending = (
@@ -1345,6 +1361,8 @@ def admin_dashboard_summary():
             "item_count": RequestedTool.query.filter_by(request_id=r.id).count(),
         }
 
+    pending_concerns = DeliveryConcern.query.filter_by(status='pending').count()
+
     return jsonify({
         "summary": {
             "total_facilities": total_facilities,
@@ -1354,6 +1372,7 @@ def admin_dashboard_summary():
             "approved_awaiting": approved_awaiting,
             "low_stock_count": low_stock_count,
             "total_stock_items": int(total_stock),
+            "pending_concerns": pending_concerns,
         },
         "recent_pending": [_req_brief(r) for r in recent_pending],
         "facility_stocks": [{"facility": r[0], "total": int(r[1])} for r in facility_stocks],
@@ -1798,18 +1817,18 @@ def delete_tool(tool_id):
 @login_required
 def tool_logs(tool_id):
     tool = Tool.query.get_or_404(tool_id)
+    usages = []
+    requests_log = []
 
-    logs = []
-
+    # 1. Direct usage records (ToolUsage)
     usage_rows = (
         db.session.query(ToolUsage, Users)
         .join(Users, Users.id == ToolUsage.user_id)
         .filter(ToolUsage.tool_id == tool_id)
-        .order_by(ToolUsage.date_used.desc())
         .all()
     )
     for usage, user in usage_rows:
-        logs.append({
+        usages.append({
             "date": usage.date_used.isoformat() if usage.date_used else None,
             "quantity": int(usage.quantity_used or 0),
             "user_name": user.first_name if user else None,
@@ -1818,43 +1837,49 @@ def tool_logs(tool_id):
             "id": usage.id
         })
 
-    if not logs:
-        approved_lines = (
-            db.session.query(RequestedTool, RequestModel, Users)
-            .join(RequestModel, RequestModel.id == RequestedTool.request_id)
-            .join(Users, Users.id == RequestModel.user_id)
-            .filter(RequestedTool.tool_id == tool_id)
-            .filter(
-                (func.lower(RequestModel.status) == "approved") |
-                (func.lower(RequestedTool.status) == "approved")
+    # 2. Request/delivery records
+    request_lines = (
+        db.session.query(RequestedTool, RequestModel, Users)
+        .join(RequestModel, RequestModel.id == RequestedTool.request_id)
+        .join(Users, Users.id == RequestModel.user_id)
+        .filter(RequestedTool.tool_id == tool_id)
+        .filter(
+            or_(
+                func.lower(RequestModel.status) == "approved",
+                func.lower(RequestedTool.status) == "approved",
+                func.lower(RequestModel.status) == "pending",
+                func.lower(RequestModel.status) == "pending supervisor review",
+                func.lower(RequestModel.status) == "pending s.i review",
             )
-            .order_by(
-                RequestModel.date_approved.desc().nullslast(),
-                RequestModel.date_requested.desc()
-            )
-            .all()
         )
+        .all()
+    )
+    for rt, req, user in request_lines:
+        when = req.date_approved or req.date_requested
+        requests_log.append({
+            "date": when.isoformat() if when else None,
+            "quantity": int(rt.quantity or 0),
+            "user_name": user.first_name if user else None,
+            "facility": user.facility if user else None,
+            "request_id": req.id,
+            "request_status": req.status,
+            "line_status": rt.status,
+            "source": "request_or_line_approved",
+            "id": rt.id
+        })
 
-        for rt, req, user in approved_lines:
-            when = req.date_approved or req.date_requested
-            logs.append({
-                "date": when.isoformat() if when else None,
-                "quantity": int(rt.quantity or 0),
-                "user_name": user.first_name if user else None,
-                "facility": user.facility if user else None,
-                "request_id": req.id,
-                "request_status": req.status,
-                "line_status": rt.status,
-                "source": "request_or_line_approved",
-                "id": rt.id
-            })
+    usages.sort(key=lambda x: (x.get("date") or "", x.get("id") or 0), reverse=True)
+    requests_log.sort(key=lambda x: (x.get("date") or "", x.get("id") or 0), reverse=True)
+    all_logs = sorted(usages + requests_log, key=lambda x: (x.get("date") or "", x.get("id") or 0), reverse=True)
 
     return jsonify({
         "tool_id": tool.id,
         "tool_name": tool.name,
-        "distributions": logs,
-        "logs": logs,
-        "data": logs
+        "usages": usages,
+        "requests": requests_log,
+        "distributions": all_logs,
+        "logs": all_logs,
+        "data": all_logs
     }), 200
 
 
@@ -2028,6 +2053,56 @@ def list_users():
     return jsonify(out), 200
 
 
+@api_bp.route("/admin/users/<int:user_id>", methods=["PUT"])
+@login_required
+def admin_edit_user(user_id):
+    """Admin: edit a user's name, email, role, facility."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+    
+    u = Users.query.get_or_404(user_id)
+    data = _json_body()
+    
+    if "first_name" in data:
+        u.first_name = (data.get("first_name") or "").strip()
+    if "email" in data:
+        new_email = (data.get("email") or "").strip().lower()
+        if new_email and new_email != (u.email or "").lower():
+            if Users.query.filter(func.lower(Users.email) == new_email, Users.id != user_id).first():
+                return jsonify({"error": "Email already in use"}), 400
+            u.email = new_email
+    if "role" in data:
+        u.role = (data.get("role") or "").strip().lower()
+    if "facility" in data:
+        u.facility = (data.get("facility") or "").strip()
+    
+    _audit("edit_user", "user", user_id)
+    db.session.commit()
+    return jsonify({"message": "User updated", "user": {
+        "id": u.id, "username": u.username, "email": u.email,
+        "first_name": u.first_name, "facility": u.facility,
+        "role": u.role, "is_active": u.is_active_flag
+    }}), 200
+
+
+@api_bp.route("/admin/users/<int:user_id>/toggle-status", methods=["POST"])
+@login_required
+def admin_toggle_user_status(user_id):
+    """Admin: enable or disable a user account."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+    
+    u = Users.query.get_or_404(user_id)
+    if u.id == current_user.id:
+        return jsonify({"error": "Cannot disable your own account"}), 400
+    
+    u.is_active_flag = not u.is_active_flag
+    action = "enabled" if u.is_active_flag else "disabled"
+    _audit("toggle_user_status", "user", user_id, {"action": action})
+    db.session.commit()
+    return jsonify({"message": f"User {action}", "is_active": u.is_active_flag}), 200
+
+
 @api_bp.route("/catalog", methods=["GET"])
 @login_required
 def catalog():
@@ -2073,28 +2148,102 @@ def create_request():
     if not isinstance(items, list) or not items:
         return jsonify({"error": "items required"}), 400
 
+    # Determine initial status based on supervisors
+    from mailer import get_supervisors_for_facility, notify_facility_supervisor_of_request
+    supervisor_emails = get_supervisors_for_facility(current_user.facility or "")
+    si_setting = SystemSetting.query.filter_by(key="si_management_email").first()
+    has_si = bool(si_setting and si_setting.value)
+
+    if supervisor_emails:
+        initial_status = "Pending Supervisor Review"
+    elif has_si:
+        initial_status = "Pending S.I Review"
+    else:
+        initial_status = "Pending"
+
     r = RequestModel(
         user_id=current_user.id,
-        status="Pending",
+        status=initial_status,
         date_requested=datetime.utcnow()
     )
     db.session.add(r)
     db.session.flush()
 
+    tools_summary = []
+    facility = current_user.facility or ""
     for it in items:
         tid = it.get("tool_id") or it.get("id")
         qty = _safe_int(it.get("quantity"), 0)
         if not tid or qty <= 0:
             continue
+
+        # ─── Check duplicate: facility already has a pending request for this tool ───
+        existing = (
+            db.session.query(RequestedTool, RequestModel)
+            .join(RequestModel, RequestedTool.request_id == RequestModel.id)
+            .filter(
+                RequestModel.user_id == current_user.id,
+                RequestedTool.tool_id == int(tid),
+                func.lower(RequestModel.status).in_([
+                    "pending", "pending supervisor review", "pending s.i review", "approved"
+                ])
+            ).first()
+        )
+        if existing:
+            rt_ex, req_ex = existing
+            tool_check = Tool.query.get(int(tid))
+            return jsonify({
+                "error": f"You already have a {req_ex.status.lower()} request (#{req_ex.id}) for '{tool_check.name if tool_check else 'this tool'}'. Please wait for it to be processed.",
+                "existing_request_id": req_ex.id,
+                "existing_status": req_ex.status,
+            }), 409
+
+        # ─── Check stock warning: facility has >5 of this tool (informational only) ───
+        warn_stock = None
+        if facility:
+            stock_check = FacilityStock.query.filter_by(facility=facility, tool_id=int(tid)).first()
+            current_stock = stock_check.quantity if stock_check else 0
+            tool_check = Tool.query.get(int(tid))
+            threshold = tool_check.low_stock_threshold if tool_check and tool_check.low_stock_threshold is not None else 5
+            if current_stock > threshold:
+                warn_stock = {
+                    "current_stock": current_stock,
+                    "threshold": threshold,
+                    "tool_name": tool_check.name if tool_check else "this tool"
+                }
+
         db.session.add(RequestedTool(
             request_id=r.id,
             tool_id=int(tid),
             quantity=qty,
             status="Pending"
         ))
+        tool = Tool.query.get(int(tid))
+        tools_summary.append({
+            "name": tool.name if tool else "Unknown Tool",
+            "quantity": qty,
+        })
 
     db.session.commit()
-    return jsonify({"message": "ok", "id": r.id}), 201
+
+    # ─── Trigger supervisor emails ───
+    if supervisor_emails:
+        for email in supervisor_emails:
+            try:
+                notify_facility_supervisor_of_request(
+                    request_id=r.id,
+                    facility_name=current_user.facility or "Unknown Facility",
+                    requester_name=current_user.first_name or current_user.username or "Unknown",
+                    tools_list=tools_summary,
+                    supervisor_email=email,
+                )
+            except Exception:
+                current_app.logger.exception(f"Failed to notify supervisor {email}")
+
+    resp = {"message": "ok", "id": r.id}
+    if warn_stock:
+        resp["stock_warning"] = warn_stock
+    return jsonify(resp), 201
 
 
 @api_bp.route("/requests", methods=["GET"])
@@ -2148,16 +2297,61 @@ def admin_list_requests():
     )
 
     if status_filter:
-        q = q.filter(func.lower(RequestModel.status) == status_filter)
+        if status_filter == "pending":
+            q = q.filter(func.lower(RequestModel.status).in_(["pending", "pending supervisor review", "pending s.i review"]))
+        else:
+            q = q.filter(func.lower(RequestModel.status) == status_filter)
 
     reqs = q.order_by(RequestModel.date_requested.desc()).all()
 
-    # Batch-load all deliveries for all line items — avoids 1 query per line
+    # Batch-load all deliveries
     all_rt_ids = [ln.id for r in reqs for ln in (r.requested_tools or [])]
     deliveries_by_rt_id: dict = {}
     if all_rt_ids:
         for d in Delivery.query.filter(Delivery.requested_tool_id.in_(all_rt_ids)).all():
             deliveries_by_rt_id[d.requested_tool_id] = d
+
+    # Batch: request-level supervisor actions
+    all_req_ids = [r.id for r in reqs]
+    supervisor_actions_map = {}
+    if all_req_ids:
+        for sa in SupervisorAction.query.filter(SupervisorAction.request_id.in_(all_req_ids)).order_by(SupervisorAction.created_at.desc()).all():
+            supervisor_actions_map.setdefault(sa.request_id, []).append(sa)
+
+    # Lightweight batch: facility stocks (only for facilities in these requests)
+    facilities_in_reqs = set()
+    for r in reqs:
+        u = getattr(r, "user", None)
+        if u and u.facility:
+            facilities_in_reqs.add(u.facility)
+    facility_stock_map = {}
+    if facilities_in_reqs:
+        for fs in FacilityStock.query.filter(FacilityStock.facility.in_(facilities_in_reqs)).all():
+            facility_stock_map[f"{fs.facility}|{fs.tool_id}"] = fs
+
+    # Batch: last delivery per (facility, tool_id) for all request tools in these facilities
+    tool_ids_in_reqs = set()
+    for r in reqs:
+        for ln in (r.requested_tools or []):
+            tool_ids_in_reqs.add(ln.tool_id)
+    last_delivery_map = {}
+    if facilities_in_reqs and tool_ids_in_reqs:
+        for d in (
+            Delivery.query
+            .join(Users, Delivery.received_by == Users.id)
+            .filter(
+                Users.facility.in_(facilities_in_reqs),
+                Delivery.tool_id.in_(tool_ids_in_reqs),
+                Delivery.is_delivered.is_(True)
+            )
+            .order_by(func.coalesce(Delivery.delivery_date, Delivery.delivery_confirmed_at).desc())
+            .all()
+        ):
+            receiver = Users.query.get(d.received_by)
+            fac = receiver.facility if receiver else ""
+            key = f"{fac}|{d.tool_id}"
+            if key not in last_delivery_map:
+                last_delivery_map[key] = d
 
     out = []
     for r in reqs:
@@ -2185,6 +2379,17 @@ def admin_list_requests():
             delivery = deliveries_by_rt_id.get(ln.id)
             is_delivered = delivery.is_delivered if delivery else False
 
+            # Last delivery info (from batch query)
+            ld_key = f"{facility}|{ln.tool_id}"
+            last_del = last_delivery_map.get(ld_key)
+            last_delivery_date = (
+                last_del.delivery_date.isoformat() if last_del and last_del.delivery_date
+                else (last_del.delivery_confirmed_at.isoformat() if last_del and last_del.delivery_confirmed_at else None)
+            )
+            last_delivery_qty = last_del.quantity_supplied if last_del else None
+            fs = facility_stock_map.get(ld_key)
+            facility_stock_remaining = fs.quantity if fs else 0
+
             line_payload = {
                 "id": ln.id,
                 "line_id": ln.id,
@@ -2205,6 +2410,9 @@ def admin_list_requests():
                     if tool_obj and getattr(tool_obj, "category", None)
                     else ""
                 ),
+                "last_delivery_date": last_delivery_date,
+                "last_delivery_qty": last_delivery_qty,
+                "facility_stock_remaining": facility_stock_remaining,
             }
             lines.append(line_payload)
 
@@ -2213,10 +2421,22 @@ def admin_list_requests():
             "total_items": int(total_qty),
         }
 
+        # Supervisor actions for this request
+        sa_list = supervisor_actions_map.get(r.id, [])
+        supervisor_status = None
+        si_status = None
+        for sa in sa_list:
+            if sa.reviewer_role == "facility_supervisor" and sa.action == "approved":
+                supervisor_status = {"email": sa.reviewer_email, "action": sa.action, "date": sa.created_at.isoformat() if sa.created_at else None}
+            elif sa.reviewer_role == "si_management" and sa.action in ("approved", "pending"):
+                si_status = {"email": sa.reviewer_email, "action": sa.action, "date": sa.created_at.isoformat() if sa.created_at else None}
+
         payload = {
             "id": r.id,
             "request_id": r.id,
             "status": r.status,
+            "supervisor_status": supervisor_status,
+            "si_status": si_status,
             "date_requested": _iso(getattr(r, "date_requested", None)),
             "date": _iso(getattr(r, "date_requested", None)),
             "requested_by": display_name,
@@ -2259,7 +2479,7 @@ def admin_approve_request(req_id):
     if not r:
         return jsonify({"error": "Request not found"}), 404
 
-    if (r.status or "").lower() != "pending":
+    if (r.status or "").lower() not in ("pending", "pending supervisor review", "pending s.i review"):
         return jsonify({"error": "Only pending requests can be approved"}), 400
 
     now = datetime.utcnow()
@@ -2363,7 +2583,7 @@ def admin_reject_request(req_id):
     if not r:
         return jsonify({"error": "Request not found"}), 404
 
-    if (r.status or "").lower() != "pending":
+    if (r.status or "").lower() not in ("pending", "pending supervisor review", "pending s.i review"):
         return jsonify({"error": "Only pending requests can be rejected"}), 400
 
     data = _json_body()
@@ -2409,7 +2629,7 @@ def admin_edit_request(req_id):
     if not r:
         return jsonify({"error": "Request not found"}), 404
 
-    if (r.status or "").lower() != "pending":
+    if (r.status or "").lower() not in ("pending", "pending supervisor review", "pending s.i review"):
         return jsonify({"error": "Only pending requests can be edited"}), 400
 
     data = _json_body()
@@ -2443,7 +2663,7 @@ def admin_delete_request(req_id):
     if not r:
         return jsonify({"error": "Request not found"}), 404
 
-    if (r.status or "").lower() != "pending":
+    if (r.status or "").lower() not in ("pending", "pending supervisor review", "pending s.i review"):
         return jsonify({"error": "Only pending requests can be deleted"}), 400
 
     db.session.delete(r)
@@ -2459,7 +2679,7 @@ def admin_pending_count():
 
     pending = (
         db.session.query(func.count(RequestModel.id))
-        .filter(func.lower(RequestModel.status) == "pending")
+        .filter(func.lower(RequestModel.status).in_(["pending", "pending supervisor review", "pending s.i review"]))
         .scalar()
         or 0
     )
@@ -2650,6 +2870,236 @@ def confirm_request_delivery(request_id):
         "confirmed_count": len(approved_lines),
         "delivery_ids": delivery_ids,
     }), 200
+
+
+@api_bp.route("/delivery/concern/<int:request_id>", methods=["POST"])
+@login_required
+def raise_delivery_concern(request_id):
+    """Facility user raises a concern: actual quantities received differ from what was sent."""
+    request_obj = RequestModel.query.get_or_404(request_id)
+
+    if request_obj.user_id != current_user.id:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    status_lower = (request_obj.status or "").lower()
+    if status_lower not in ("approved",):
+        return jsonify({"error": "Can only raise concerns for approved requests"}), 400
+
+    # Block duplicate pending concerns for the same request
+    existing = DeliveryConcern.query.filter_by(request_id=request_id, status='pending').first()
+    if existing:
+        return jsonify({"error": "A concern is already pending for this request"}), 400
+
+    data = _json_body()
+    concern_note = (data.get("concern_note") or "").strip()
+    actual_quantities = data.get("actual_quantities") or {}
+
+    if not concern_note:
+        return jsonify({"error": "Please describe your concern"}), 400
+
+    concern = DeliveryConcern(
+        request_id=request_id,
+        raised_by=current_user.id,
+        facility=current_user.facility or "",
+        concern_note=concern_note,
+        actual_quantities=json.dumps({str(k): int(v) for k, v in actual_quantities.items()}),
+        status='pending',
+    )
+    db.session.add(concern)
+    db.session.commit()
+
+    _audit("raise_concern", "request", request_id, {
+        "facility": current_user.facility,
+        "concern_note": concern_note,
+        "concern_id": concern.id,
+    })
+
+    # Alert all admin users via SSE
+    raiser_name = current_user.first_name or current_user.username
+    send_notification_to_admins({
+        "type": "delivery_concern",
+        "title": "Delivery Concern Raised",
+        "message": (
+            f"{raiser_name} from {current_user.facility} raised a concern "
+            f"about the quantities received for Request #{request_id}"
+        ),
+        "request_id": request_id,
+        "concern_id": concern.id,
+        "facility": current_user.facility,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+
+    return jsonify({"message": "Concern submitted successfully", "concern_id": concern.id}), 201
+
+
+@api_bp.route("/admin/delivery-concerns", methods=["GET"])
+@login_required
+def list_delivery_concerns():
+    """Admin: list delivery concerns, newest first."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    status_filter = request.args.get("status", "pending")
+    q = DeliveryConcern.query
+    if status_filter != "all":
+        q = q.filter_by(status=status_filter)
+    concerns = q.order_by(DeliveryConcern.created_at.desc()).all()
+
+    result = []
+    for c in concerns:
+        # Enrich with the request lines so admin can see tool names + sent qty vs claimed qty
+        lines = RequestedTool.query.filter_by(request_id=c.request_id, status="Approved").all()
+        actual = json.loads(c.actual_quantities) if c.actual_quantities else {}
+        result.append({
+            **c.to_dict(),
+            "lines": [
+                {
+                    "id": ln.id,
+                    "tool_name": ln.tool.name if ln.tool else "—",
+                    "sent_qty": ln.quantity,
+                    "claimed_qty": actual.get(str(ln.id)),
+                }
+                for ln in lines
+            ],
+        })
+
+    return jsonify(result), 200
+
+
+@api_bp.route("/admin/delivery-concerns/<int:concern_id>/accept", methods=["POST"])
+@login_required
+def accept_delivery_concern(concern_id):
+    """Admin accepts concern: use the claimed quantities, update stock, mark request Delivered."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    concern = DeliveryConcern.query.get_or_404(concern_id)
+    if concern.status != 'pending':
+        return jsonify({"error": "This concern has already been reviewed"}), 400
+
+    request_obj = RequestModel.query.get_or_404(concern.request_id)
+    actual_quantities = json.loads(concern.actual_quantities) if concern.actual_quantities else {}
+
+    approved_lines = RequestedTool.query.filter_by(
+        request_id=concern.request_id, status="Approved"
+    ).all()
+
+    now = datetime.utcnow()
+    facility = concern.facility
+    delivery_ids = []
+
+    for line in approved_lines:
+        approved_qty = int(line.quantity or 0)
+        raw = actual_quantities.get(str(line.id))
+        qty = max(0, int(raw)) if raw is not None else approved_qty
+
+        existing = Delivery.query.filter_by(requested_tool_id=line.id).first()
+        if existing:
+            if existing.is_delivered:
+                delivery_ids.append(existing.id)
+                continue
+            existing.is_delivered = True
+            existing.delivery_confirmed_at = now
+            existing.quantity_supplied = qty
+            delivery_ids.append(existing.id)
+        else:
+            d = Delivery(
+                request_id=concern.request_id,
+                tool_id=line.tool_id,
+                requested_tool_id=line.id,
+                quantity_supplied=qty,
+                basic_unit="unit",
+                distributed_by=getattr(request_obj, "approved_by_id", None),
+                received_by=concern.raised_by,
+                witnessed_by="",
+                delivery_date=now,
+                delivery_confirmed_at=now,
+                is_delivered=True,
+            )
+            db.session.add(d)
+            db.session.flush()
+            delivery_ids.append(d.id)
+
+        if facility and line.tool_id and qty > 0:
+            fs = FacilityStock.query.filter_by(facility=facility, tool_id=line.tool_id).first()
+            if fs:
+                fs.quantity     += qty
+                fs.qty_received += qty
+            else:
+                db.session.add(FacilityStock(
+                    facility=facility, tool_id=line.tool_id,
+                    quantity=qty, opening_balance=0, qty_received=qty,
+                ))
+
+    request_obj.status = "Delivered"
+    concern.status = "accepted"
+    concern.reviewed_by = current_user.id
+    concern.reviewed_at = now
+
+    _audit("accept_concern", "delivery_concern", concern_id, {
+        "request_id": concern.request_id, "facility": facility,
+    })
+    db.session.commit()
+
+    # Notify the facility user that their concern was accepted
+    raiser = Users.query.get(concern.raised_by)
+    if raiser:
+        send_notification_to_user(raiser.id, {
+            "type": "concern_accepted",
+            "title": "Delivery Concern Accepted",
+            "message": (
+                f"Admin accepted your concern for Request #{concern.request_id}. "
+                f"Your reported quantities have been recorded and stock has been updated."
+            ),
+            "request_id": concern.request_id,
+            "timestamp": now.isoformat(),
+        })
+
+    return jsonify({"message": "Concern accepted — delivery confirmed and stock updated"}), 200
+
+
+@api_bp.route("/admin/delivery-concerns/<int:concern_id>/reject", methods=["POST"])
+@login_required
+def reject_delivery_concern(concern_id):
+    """Admin rejects concern: send warning back to facility user to accept original quantities."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    concern = DeliveryConcern.query.get_or_404(concern_id)
+    if concern.status != 'pending':
+        return jsonify({"error": "This concern has already been reviewed"}), 400
+
+    data = _json_body()
+    reject_note = (data.get("reject_note") or "").strip()
+
+    now = datetime.utcnow()
+    concern.status = "rejected"
+    concern.reviewed_by = current_user.id
+    concern.reviewed_at = now
+
+    _audit("reject_concern", "delivery_concern", concern_id, {
+        "request_id": concern.request_id,
+        "facility": concern.facility,
+        "reject_note": reject_note,
+    })
+    db.session.commit()
+
+    # Notify the facility user to confirm the original quantities
+    raiser = Users.query.get(concern.raised_by)
+    if raiser:
+        send_notification_to_user(raiser.id, {
+            "type": "concern_rejected",
+            "title": "Delivery Concern Rejected",
+            "message": (
+                f"Admin rejected your concern for Request #{concern.request_id}. "
+                f"Please confirm receipt of the original quantities that were sent."
+                + (f" Admin note: {reject_note}" if reject_note else "")
+            ),
+            "request_id": concern.request_id,
+            "timestamp": now.isoformat(),
+        })
+
+    return jsonify({"message": "Concern rejected — facility user notified"}), 200
 
 
 @api_bp.route("/notifications/recent", methods=["GET"])
@@ -4108,6 +4558,150 @@ def download_monthly_consumption():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@api_bp.route("/admin/utilization/calculate", methods=["POST"])
+@login_required
+def calculate_utilization():
+    """Calculate expected tool utilization from RADET and/or HTS_PEPFAR reports."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    period_start_str = (request.form.get("period_start") or "").strip()
+    period_end_str   = (request.form.get("period_end")   or "").strip()
+
+    if not period_start_str or not period_end_str:
+        return jsonify({"error": "period_start and period_end are required (YYYY-MM-DD)"}), 400
+
+    try:
+        period_start = datetime.strptime(period_start_str, "%Y-%m-%d").date()
+        period_end   = datetime.strptime(period_end_str,   "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
+
+    if period_start > period_end:
+        return jsonify({"error": "period_start must be before period_end"}), 400
+
+    def _find_col(df, candidates):
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    def _read_excel(file_obj):
+        raw = file_obj.read()
+        if not raw:
+            raise ValueError("Empty file")
+        return pd.read_excel(BytesIO(raw))
+
+    # ── RADET ────────────────────────────────────────────────────────────────
+    radet_data  = {}   # facility -> row count (refills)
+    radet_error = None
+    radet_file  = request.files.get("radet_file")
+
+    if radet_file and radet_file.filename:
+        try:
+            df = _read_excel(radet_file)
+            fac_col  = _find_col(df, ["Facility Name", "Facility_Name", "FACILITY NAME"])
+            date_col = _find_col(df, ["Last Pickup Date (yyyy-mm-dd)", "Last Pickup Date",
+                                       "last_pickup_date", "LastPickupDate"])
+            if not fac_col:
+                radet_error = (
+                    f"RADET: 'Facility Name' column not found. "
+                    f"Available: {', '.join(str(c) for c in df.columns[:15])}"
+                )
+            elif not date_col:
+                radet_error = (
+                    f"RADET: 'Last Pickup Date (yyyy-mm-dd)' column not found. "
+                    f"Available: {', '.join(str(c) for c in df.columns[:15])}"
+                )
+            else:
+                df[fac_col]  = df[fac_col].fillna("").astype(str).str.strip()
+                df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+                mask = (
+                    (df[date_col].dt.date >= period_start) &
+                    (df[date_col].dt.date <= period_end)
+                )
+                for fac, cnt in df[mask].groupby(fac_col).size().items():
+                    if fac:
+                        radet_data[fac] = int(cnt)
+        except Exception as exc:
+            radet_error = f"RADET read error: {exc}"
+
+    # ── HTS ─────────────────────────────────────────────────────────────────
+    hts_data  = {}   # facility -> row count (tests)
+    hts_error = None
+    hts_file  = request.files.get("hts_file")
+
+    if hts_file and hts_file.filename:
+        try:
+            df = _read_excel(hts_file)
+            fac_col  = _find_col(df, ["facility", "Facility", "Facility Name", "FACILITY"])
+            date_col = _find_col(df, ["Date of Current HIV Testing (yyyy-mm-dd)",
+                                       "Date of Current HIV Testing",
+                                       "testing_date", "Testing Date"])
+            if not fac_col:
+                hts_error = (
+                    f"HTS: 'facility' column not found. "
+                    f"Available: {', '.join(str(c) for c in df.columns[:15])}"
+                )
+            elif not date_col:
+                hts_error = (
+                    f"HTS: 'Date of Current HIV Testing (yyyy-mm-dd)' column not found. "
+                    f"Available: {', '.join(str(c) for c in df.columns[:15])}"
+                )
+            else:
+                df[fac_col]  = df[fac_col].fillna("").astype(str).str.strip()
+                df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+                mask = (
+                    (df[date_col].dt.date >= period_start) &
+                    (df[date_col].dt.date <= period_end)
+                )
+                for fac, cnt in df[mask].groupby(fac_col).size().items():
+                    if fac:
+                        hts_data[fac] = int(cnt)
+        except Exception as exc:
+            hts_error = f"HTS read error: {exc}"
+
+    # ── Build per-facility results ────────────────────────────────────────
+    all_facilities = sorted(set(list(radet_data) + list(hts_data)))
+
+    results = []
+    for fac in all_facilities:
+        radet_cnt = radet_data.get(fac, 0)
+        hts_cnt   = hts_data.get(fac, 0)
+        results.append({
+            "facility":                     fac,
+            "radet_refills":                radet_cnt,
+            "hts_tests":                    hts_cnt,
+            # 1 form = 100 refills
+            "combined_pharmacy_forms":      math.ceil(radet_cnt / 100) if radet_cnt else 0,
+            # 1 form = 100 persons
+            "facility_care_support_forms":  math.ceil(radet_cnt / 100) if radet_cnt else 0,
+            # 1 worksheet = 1900 refills
+            "pharmacy_daily_worksheets":    math.ceil(radet_cnt / 1900) if radet_cnt else 0,
+            # 1 form per test
+            "national_hts_forms":           hts_cnt,
+        })
+
+    totals = {
+        "facility_count":               len(results),
+        "radet_refills":                sum(r["radet_refills"]               for r in results),
+        "hts_tests":                    sum(r["hts_tests"]                   for r in results),
+        "combined_pharmacy_forms":      sum(r["combined_pharmacy_forms"]      for r in results),
+        "facility_care_support_forms":  sum(r["facility_care_support_forms"]  for r in results),
+        "pharmacy_daily_worksheets":    sum(r["pharmacy_daily_worksheets"]    for r in results),
+        "national_hts_forms":           sum(r["national_hts_forms"]           for r in results),
+    }
+
+    return jsonify({
+        "period":          {"start": period_start_str, "end": period_end_str},
+        "results":         results,
+        "totals":          totals,
+        "radet_facilities": len(radet_data),
+        "hts_facilities":   len(hts_data),
+        "errors":          {"radet": radet_error, "hts": hts_error},
+    }), 200
+
+
 @api_bp.route("/forecast/pharmacy", methods=["POST"])
 @login_required
 def forecast_pharmacy():
@@ -4399,3 +4993,288 @@ def delete_stock_receipt(receipt_id):
     db.session.commit()
 
     return jsonify({"message": "receipt deleted"}), 200
+
+# =============================================================================
+# PATCH: New endpoints added 2026-08-11 (Features 1-11)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Physical Count Export
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/inventory/physical-counts/export", methods=["GET"])
+@login_required
+def export_physical_counts():
+    facility = current_user.facility
+    if not facility:
+        return jsonify({"error": "No facility assigned"}), 400
+    counts = PhysicalStockCount.query.filter_by(facility=facility).order_by(PhysicalStockCount.counted_at.desc()).all()
+    if not counts:
+        return jsonify({"error": "No physical count records found"}), 404
+    rows = []
+    for c in counts:
+        tool = Tool.query.get(c.tool_id)
+        counted_by_user = Users.query.get(c.counted_by) if c.counted_by else None
+        rows.append({
+            "Tool": tool.name if tool else f"Tool #{c.tool_id}",
+            "System Quantity": c.system_quantity, "Physical Quantity": c.physical_quantity,
+            "Discrepancy": c.discrepancy, "Has Discrepancy": "Yes" if c.discrepancy != 0 else "No",
+            "Counted By": counted_by_user.first_name if counted_by_user else "Unknown",
+            "Counted At": c.counted_at.strftime("%Y-%m-%d %H:%M") if c.counted_at else "",
+            "Notes": c.notes or "",
+        })
+    df = pd.DataFrame(rows)
+    bio = BytesIO()
+    safe_facility = facility.replace(" ", "_").replace("/", "_")[:30]
+    with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name=safe_facility[:31], index=False)
+        ws = writer.sheets[safe_facility[:31]]
+        for i, col in enumerate(df.columns):
+            ws.set_column(i, i, min(max(df[col].astype(str).apply(len).max(), len(col)) + 2, 50))
+    data_bytes = bio.getvalue()
+    filename = f"physical_count_{safe_facility}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(BytesIO(data_bytes), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=filename)
+
+
+# ---------------------------------------------------------------------------
+# Stock Check Before Request
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/requests/check-stock", methods=["POST"])
+@login_required
+def check_stock_before_request():
+    data = _json_body()
+    tool_id = _safe_int(data.get("tool_id"))
+    facility = current_user.facility
+    if not facility or not tool_id:
+        return jsonify({"warn": False}), 200
+    tool = Tool.query.get(tool_id)
+    threshold = tool.low_stock_threshold if tool and tool.low_stock_threshold is not None else 5
+    stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
+    current_qty = stock.quantity if stock else 0
+    if current_qty > threshold:
+        return jsonify({"warn": True, "message": f"You still have {current_qty} units of '{tool.name if tool else 'this tool'}' in stock (threshold: {threshold}). Please update utilization before requesting.", "current_stock": current_qty, "threshold": threshold}), 200
+    return jsonify({"warn": False}), 200
+
+
+# ---------------------------------------------------------------------------
+# Duplicate Request Check
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/requests/check-duplicate", methods=["POST"])
+@login_required
+def check_duplicate_request():
+    data = _json_body()
+    tool_id = _safe_int(data.get("tool_id"))
+    if not tool_id:
+        return jsonify({"blocked": False}), 200
+    existing = db.session.query(RequestedTool, RequestModel).join(RequestModel, RequestedTool.request_id == RequestModel.id).filter(RequestModel.user_id == current_user.id, RequestedTool.tool_id == tool_id, RequestModel.status.in_(["Pending", "Pending Supervisor Review", "Pending S.I Review", "Approved"])).first()
+    if existing:
+        rt, req = existing
+        return jsonify({"blocked": True, "message": f"You already have a {req.status.lower()} request (#{req.id}) for this tool. Please wait for it to be processed.", "existing_request_id": req.id, "existing_status": req.status}), 200
+    return jsonify({"blocked": False}), 200
+
+
+# ---------------------------------------------------------------------------
+# App Update Check
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/app/check-update", methods=["GET"])
+def check_app_update():
+    import urllib.request
+    try:
+        repo_owner = os.getenv("GITHUB_REPO_OWNER", "Gscientist64")
+        repo_name = os.getenv("GITHUB_REPO_NAME", "ECTools_Deployed")
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "TIMS-Updater/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            latest_version = data["tag_name"].lstrip("v")
+            asset = next((a for a in data.get("assets", []) if a["name"].endswith(".exe")), None)
+            return jsonify({"latest_version": latest_version, "download_url": asset["browser_download_url"] if asset else None, "release_notes": data.get("body", ""), "size": asset.get("size", 0) if asset else 0, "published_at": data.get("published_at", "")})
+    except Exception as e:
+        current_app.logger.warning(f"Update check failed: {e}")
+        return jsonify({"error": "Could not check for updates"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Supervisor Email Action Handler (clicked from email)
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/supervisor/action", methods=["GET"])
+def supervisor_email_action():
+    from mailer import _verify_action_token, notify_si_management_of_request
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        return "<h2>Invalid link</h2><p>No token provided.</p>", 400
+    req_id, email, role, action = _verify_action_token(token)
+    if req_id is None:
+        return f"<h2>Invalid or Expired Link</h2><p>{email}</p>", 400
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    sa = SupervisorAction.query.filter_by(token_hash=token_hash).first()
+    if not sa or sa.action != "pending":
+        return "<h2>Link Already Used</h2><p>This approve/reject link has already been processed.</p>", 400
+    request_obj = RequestModel.query.get(req_id)
+    if not request_obj:
+        return "<h2>Request Not Found</h2>", 404
+    if action == "approved":
+        sa.action = "approved"
+        sa.created_at = datetime.utcnow()
+        if role == "facility_supervisor":
+            si_setting = SystemSetting.query.filter_by(key="si_management_email").first()
+            if si_setting and si_setting.value:
+                request_obj.status = "Pending S.I Review"
+                db.session.commit()
+                try:
+                    requester = Users.query.get(request_obj.user_id)
+                    tools = RequestedTool.query.filter_by(request_id=req_id).all()
+                    tools_list = [{"name": (Tool.query.get(rt.tool_id).name if Tool.query.get(rt.tool_id) else "Unknown"), "quantity": rt.quantity} for rt in tools]
+                    notify_si_management_of_request(request_id=req_id, facility_name=requester.facility if requester else "Unknown", requester_name=requester.first_name if requester else "Unknown", tools_list=tools_list, supervisor_name=email)
+                except Exception:
+                    current_app.logger.exception("Failed to notify S.I Management")
+                return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your approval has been recorded. Forwarded to S.I Management.</p></body></html>", 200
+            else:
+                request_obj.status = "Pending"
+                db.session.commit()
+                return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your approval has been recorded. Forwarded to admin.</p></body></html>", 200
+        elif role == "si_management":
+            request_obj.status = "Pending"
+            db.session.commit()
+            return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your S.I approval has been recorded. Sent to admin.</p></body></html>", 200
+    elif action == "rejected":
+        sa.action = "rejected"
+        sa.created_at = datetime.utcnow()
+        request_obj.status = "Rejected"
+        request_obj.date_rejected = datetime.utcnow()
+        request_obj.rejection_reason = f"Rejected by {role.replace('_', ' ').title()} ({email})"
+        for ln in (request_obj.requested_tools or []):
+            ln.status = "Rejected"
+        _audit("supervisor_reject", "request", req_id, {"role": role, "email": email})
+        db.session.commit()
+        return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#dc2626;'>Rejected</h1><p>The request has been rejected.</p></body></html>", 200
+    return "<h2>Unknown action</h2>", 400
+
+
+# ---------------------------------------------------------------------------
+# Admin: Supervisor CRUD
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/admin/supervisors", methods=["GET"])
+@login_required
+def list_supervisors():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    supervisors = Users.query.filter_by(is_supervisor=True).all()
+    result = []
+    for s in supervisors:
+        facilities = json.loads(s.supervised_facilities or "[]")
+        result.append({"id": s.id, "email": s.email, "username": s.username, "first_name": s.first_name, "supervised_facilities": facilities, "supervised_count": len(facilities) if facilities else "All facilities"})
+    return jsonify(result), 200
+
+
+@api_bp.route("/admin/supervisors", methods=["POST"])
+@login_required
+def create_supervisor():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    data = _json_body()
+    email = (data.get("email") or "").strip().lower()
+    first_name = (data.get("first_name") or data.get("name") or "").strip()
+    facilities = data.get("facilities") or []
+    if not email: return jsonify({"error": "Email is required"}), 400
+    if not isinstance(facilities, list): return jsonify({"error": "facilities must be a list"}), 400
+    user = Users.query.filter(func.lower(Users.email) == email).first()
+    if user:
+        user.is_supervisor = True
+        user.supervised_facilities = json.dumps(facilities)
+    else:
+        username = email.split("@")[0]
+        base = username; counter = 1
+        while Users.query.filter(func.lower(Users.username) == username.lower()).first():
+            username = f"{base}{counter}"; counter += 1
+        user = Users(email=email, username=username, first_name=first_name or "Supervisor", facility="Supervisor", password=_hash_password("changeme123"), roles="supervisor", is_supervisor=True, supervised_facilities=json.dumps(facilities))
+        db.session.add(user)
+    db.session.commit()
+    return jsonify({"message": "Supervisor created/updated", "id": user.id, "email": user.email, "supervised_facilities": facilities}), 201
+
+
+@api_bp.route("/admin/supervisors/<int:user_id>", methods=["PUT"])
+@login_required
+def update_supervisor(user_id):
+    if not _is_admin_user(current_user): return _admin_required_json()
+    user = Users.query.get_or_404(user_id)
+    data = _json_body()
+    if "facilities" in data: user.supervised_facilities = json.dumps(data["facilities"] or [])
+    if "email" in data: user.email = (data.get("email") or "").strip().lower()
+    if "first_name" in data: user.first_name = (data.get("first_name") or "").strip()
+    db.session.commit()
+    return jsonify({"message": "Supervisor updated"}), 200
+
+
+@api_bp.route("/admin/supervisors/<int:user_id>", methods=["DELETE"])
+@login_required
+def remove_supervisor(user_id):
+    if not _is_admin_user(current_user): return _admin_required_json()
+    user = Users.query.get_or_404(user_id)
+    user.is_supervisor = False
+    user.supervised_facilities = None
+    db.session.commit()
+    return jsonify({"message": "Supervisor removed"}), 200
+
+
+# ---------------------------------------------------------------------------
+# Admin: S.I Management Settings
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/admin/settings/si-management", methods=["GET"])
+@login_required
+def get_si_management_settings():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    setting = SystemSetting.query.filter_by(key="si_management_entries").first()
+    entries = []
+    if setting and setting.value:
+        try:
+            entries = json.loads(setting.value)
+        except Exception:
+            entries = []
+    # Also support legacy single-email format
+    if not entries:
+        legacy = SystemSetting.query.filter_by(key="si_management_email").first()
+        if legacy and legacy.value:
+            entries = [{"email": legacy.value.strip(), "name": "S.I Management"}]
+    return jsonify({"entries": entries}), 200
+
+
+@api_bp.route("/admin/settings/si-management", methods=["PUT"])
+@login_required
+def update_si_management_settings():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    data = _json_body()
+    entries = data.get("entries") or []
+    if not isinstance(entries, list):
+        return jsonify({"error": "entries must be a list"}), 400
+    setting = SystemSetting.query.filter_by(key="si_management_entries").first()
+    if setting:
+        setting.value = json.dumps(entries)
+    else:
+        setting = SystemSetting(key="si_management_entries", value=json.dumps(entries))
+        db.session.add(setting)
+    # Also update legacy field for backward compat
+    legacy = SystemSetting.query.filter_by(key="si_management_email").first()
+    primary_email = entries[0]["email"] if entries else ""
+    if legacy:
+        legacy.value = primary_email
+    elif primary_email:
+        db.session.add(SystemSetting(key="si_management_email", value=primary_email))
+    db.session.commit()
+    return jsonify({"message": "S.I Management updated", "entries": entries}), 200
+
+
+# ---------------------------------------------------------------------------
+# Admin: List All Facilities
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/admin/facilities-list", methods=["GET"])
+@login_required
+def list_all_facilities():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    user_facs = db.session.query(Users.facility).filter(Users.facility.isnot(None), Users.facility != "", Users.facility != "Supervisor").distinct().order_by(Users.facility).all()
+    return jsonify([r[0] for r in user_facs]), 200

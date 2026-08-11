@@ -4,9 +4,10 @@ import { fmtDate, fmtDateTime } from './utils';
 import {
   Search, ClipboardList, Minus, Plus, Send, CheckCircle,
   Download, PackageCheck, ChevronDown, ShoppingCart, X,
-  Clock, AlertCircle, Inbox,
+  Clock, AlertCircle, Inbox, AlertTriangle, MessageSquare,
 } from 'lucide-react';
 import { useToast } from './toasts';
+import CommentThread from './CommentThread';
 
 // ─── tiny shared primitives ───────────────────────────────────────────────────
 
@@ -63,21 +64,23 @@ function Stepper({ value, onChange }) {
 
 // ─── Delivery confirmation dialog ─────────────────────────────────────────────
 
-function DeliveryDialog({ open, lines, onConfirm, onClose }) {
+function DeliveryDialog({ open, lines, requestId, onConfirm, onClose }) {
   const [witnessedBy, setWitnessedBy] = useState('');
-  const [basicUnit, setBasicUnit] = useState('unit');
-  const [actualQtys, setActualQtys] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  // concern mode state
+  const [mode, setMode] = useState('confirm'); // 'confirm' | 'concern'
+  const [concernNote, setConcernNote] = useState('');
+  const [claimedQtys, setClaimedQtys] = useState({});
   const { push } = useToast();
 
-  // Pre-fill actual qtys from approved lines whenever dialog opens
   useEffect(() => {
     if (open && lines?.length) {
       const init = {};
       lines.forEach(ln => { init[ln.id] = ln.quantity; });
-      setActualQtys(init);
+      setClaimedQtys(init);
       setWitnessedBy('');
-      setBasicUnit('unit');
+      setMode('confirm');
+      setConcernNote('');
     }
   }, [open, lines]);
 
@@ -85,13 +88,13 @@ function DeliveryDialog({ open, lines, onConfirm, onClose }) {
 
   const setQty = (id, val) => {
     const n = Math.max(0, parseInt(val) || 0);
-    setActualQtys(q => ({ ...q, [id]: n }));
+    setClaimedQtys(q => ({ ...q, [id]: n }));
   };
 
-  const handle = async () => {
+  const handleConfirm = async () => {
     setSubmitting(true);
     try {
-      await onConfirm(witnessedBy, basicUnit, actualQtys);
+      await onConfirm(witnessedBy, 'unit', {});
       push('Delivery confirmed — stock updated', 'success');
       onClose();
     } catch (err) {
@@ -101,105 +104,143 @@ function DeliveryDialog({ open, lines, onConfirm, onClose }) {
     }
   };
 
+  const handleConcern = async () => {
+    if (!concernNote.trim()) {
+      push('Please describe your concern', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.raiseDeliveryConcern(requestId, concernNote, claimedQtys);
+      push('Concern submitted — admin will review and respond', 'success');
+      onClose();
+    } catch (err) {
+      push(err.message || 'Failed to submit concern', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-neutral-200 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-neutral-200 overflow-hidden max-h-[92vh] flex flex-col">
+
         {/* Header */}
-        <div className="bg-emerald-600 px-5 py-4 flex items-center justify-between">
+        <div className={`px-5 py-4 flex items-center justify-between flex-shrink-0 ${mode === 'concern' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
           <div className="flex items-center gap-2 text-white">
-            <PackageCheck className="h-5 w-5" />
-            <span className="font-semibold">Confirm Delivery Receipt</span>
+            {mode === 'concern' ? <AlertTriangle className="h-5 w-5" /> : <PackageCheck className="h-5 w-5" />}
+            <span className="font-semibold">
+              {mode === 'concern' ? 'Raise a Concern' : 'Confirm Delivery Receipt'}
+            </span>
           </div>
           <button onClick={onClose} className="text-white/70 hover:text-white transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          {/* Per-item actual quantities */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+
+          {/* Items sent — always read-only */}
           <div>
             <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-2">
-              Actual Quantities Received
+              {mode === 'confirm' ? 'Items to be Delivered' : 'Quantities Sent vs. What You Received'}
             </p>
-            <p className="text-xs text-neutral-400 mb-3">
-              Enter the quantity that physically arrived. If an item arrived short or was damaged, update the number below.
-            </p>
-            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
               {(lines || []).map(ln => (
-                <div key={ln.id} className="flex items-center justify-between gap-3 bg-neutral-50 rounded-xl px-3 py-2">
+                <div key={ln.id} className="flex items-center justify-between gap-3 bg-neutral-50 rounded-xl px-3 py-2.5">
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium text-neutral-900 truncate block">{ln.tool_name}</span>
-                    <span className="text-xs text-neutral-400">Approved: {ln.quantity}</span>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button type="button" onClick={() => setQty(ln.id, (actualQtys[ln.id] || 0) - 1)}
-                      className="h-7 w-7 rounded-lg border border-neutral-200 text-neutral-500 hover:bg-neutral-100 flex items-center justify-center text-sm">−</button>
-                    <input
-                      type="number" min="0"
-                      value={actualQtys[ln.id] ?? ln.quantity}
-                      onChange={e => setQty(ln.id, e.target.value)}
-                      className={`w-14 text-center text-sm font-semibold rounded-lg border px-1 py-1 outline-none ${
-                        (actualQtys[ln.id] ?? ln.quantity) < ln.quantity
-                          ? 'border-amber-400 bg-amber-50 text-amber-700'
-                          : 'border-neutral-200 bg-white text-neutral-900'
-                      }`}
-                    />
-                    <button type="button" onClick={() => setQty(ln.id, (actualQtys[ln.id] || 0) + 1)}
-                      className="h-7 w-7 rounded-lg border border-neutral-200 text-neutral-500 hover:bg-neutral-100 flex items-center justify-center text-sm">+</button>
-                  </div>
+                  {mode === 'confirm' ? (
+                    <span className="text-sm font-bold text-emerald-700 flex-shrink-0">{ln.quantity}</span>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-neutral-400 line-through">{ln.quantity}</span>
+                      <div className="flex items-center gap-0.5">
+                        <button type="button" onClick={() => setQty(ln.id, (claimedQtys[ln.id] ?? ln.quantity) - 1)}
+                          className="h-6 w-6 rounded border border-neutral-200 text-neutral-500 hover:bg-neutral-100 flex items-center justify-center text-xs">−</button>
+                        <input
+                          type="number" min="0"
+                          value={claimedQtys[ln.id] ?? ln.quantity}
+                          onChange={e => setQty(ln.id, e.target.value)}
+                          className={`w-12 text-center text-sm font-bold rounded border px-1 py-0.5 outline-none ${
+                            (claimedQtys[ln.id] ?? ln.quantity) < ln.quantity
+                              ? 'border-amber-400 bg-amber-50 text-amber-700'
+                              : 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          }`}
+                        />
+                        <button type="button" onClick={() => setQty(ln.id, (claimedQtys[ln.id] ?? ln.quantity) + 1)}
+                          className="h-6 w-6 rounded border border-neutral-200 text-neutral-500 hover:bg-neutral-100 flex items-center justify-center text-xs">+</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
-            {(lines || []).some(ln => (actualQtys[ln.id] ?? ln.quantity) < ln.quantity) && (
-              <p className="text-xs text-amber-600 mt-2 bg-amber-50 rounded-lg px-3 py-2">
-                Some quantities are below the approved amount. The difference will be noted on the delivery record.
+          </div>
+
+          {mode === 'confirm' && (
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">
+                Witnessed By <span className="text-neutral-400 font-normal normal-case">(optional)</span>
+              </label>
+              <input type="text" placeholder="Full name of witness" value={witnessedBy}
+                onChange={e => setWitnessedBy(e.target.value)}
+                className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+            </div>
+          )}
+
+          {mode === 'concern' && (
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">
+                Describe your concern <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                placeholder="e.g. Only 5 of the 10 stapling machines were in the package. One register was damaged."
+                value={concernNote}
+                onChange={e => setConcernNote(e.target.value)}
+                className="w-full rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 resize-none"
+              />
+              <p className="text-[11px] text-neutral-400">
+                Admin will review and either accept your reported quantities or instruct you to confirm the original quantities.
               </p>
-            )}
-          </div>
+            </div>
+          )}
+        </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Basic Unit</label>
-            <select
-              value={basicUnit}
-              onChange={(e) => setBasicUnit(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-            >
-              {['unit', 'register', 'booklet', 'pack'].map(u => (
-                <option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">
-              Witnessed By <span className="text-neutral-400 font-normal normal-case">(optional)</span>
-            </label>
-            <input
-              type="text"
-              placeholder="Full name of witness"
-              value={witnessedBy}
-              onChange={(e) => setWitnessedBy(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-            />
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={handle}
-              disabled={submitting}
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm transition-colors disabled:opacity-60"
-            >
-              <CheckCircle className="h-4 w-4" />
-              {submitting ? 'Confirming…' : 'Confirm Receipt'}
-            </button>
-            <button
-              onClick={onClose}
-              disabled={submitting}
-              className="px-4 rounded-xl border border-neutral-200 text-neutral-600 hover:bg-neutral-50 text-sm font-medium transition-colors disabled:opacity-60"
-            >
-              Cancel
-            </button>
-          </div>
+        {/* Footer buttons */}
+        <div className="px-5 pb-5 pt-2 flex-shrink-0 space-y-2">
+          {mode === 'confirm' ? (
+            <>
+              <button onClick={handleConfirm} disabled={submitting}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 text-sm transition-colors disabled:opacity-60">
+                <CheckCircle className="h-4 w-4" />
+                {submitting ? 'Confirming…' : 'All Items Received Correctly — Confirm'}
+              </button>
+              <button onClick={() => setMode('concern')} disabled={submitting}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold py-2.5 text-sm transition-colors disabled:opacity-60">
+                <AlertTriangle className="h-4 w-4" />
+                Quantities Don't Match — Raise a Concern
+              </button>
+              <button onClick={onClose} disabled={submitting}
+                className="w-full rounded-xl border border-neutral-200 text-neutral-600 hover:bg-neutral-50 text-sm font-medium py-2 transition-colors disabled:opacity-60">
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={handleConcern} disabled={submitting || !concernNote.trim()}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 text-sm transition-colors disabled:opacity-60">
+                <MessageSquare className="h-4 w-4" />
+                {submitting ? 'Submitting…' : 'Submit Concern to Admin'}
+              </button>
+              <button onClick={() => setMode('confirm')} disabled={submitting}
+                className="w-full rounded-xl border border-neutral-200 text-neutral-600 hover:bg-neutral-50 text-sm font-medium py-2 transition-colors disabled:opacity-60">
+                Back
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -219,6 +260,7 @@ export default function RequestScreen() {
   const [myReqs, setMyReqs] = useState([]);
   const [openReqId, setOpenReqId] = useState(null);
   const [dialog, setDialog] = useState({ open: false, requestId: null, lines: [] });
+  const [stockWarnings, setStockWarnings] = useState({}); // { [tool_id]: { message, current_stock } }
 
   useEffect(() => { loadAll(); }, []);
 
@@ -258,7 +300,23 @@ export default function RequestScreen() {
     } catch { return []; }
   }
 
-  const setToolQty = (id, val) => setQty(q => ({ ...q, [id]: val }));
+  const setToolQty = (id, val) => {
+    setQty(q => ({ ...q, [id]: val }));
+    // Real-time stock check — show inline warning bubble near the tool
+    const numVal = parseInt(val, 10);
+    if (numVal > 0) {
+      api.checkStockBeforeRequest(id, numVal).then(res => {
+        if (res && res.warn) {
+          setStockWarnings(w => ({ ...w, [id]: { message: res.message || `You still have ${res.current_stock} in stock`, current_stock: res.current_stock } }));
+          // Auto-dismiss after 7 seconds
+          setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 7000);
+        }
+      }).catch(() => {});
+    } else {
+      // Clear warning if qty is cleared
+      setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; });
+    }
+  };
 
   const items = useMemo(() => {
     const out = [];
@@ -334,6 +392,7 @@ export default function RequestScreen() {
       <DeliveryDialog
         open={dialog.open}
         lines={dialog.lines}
+        requestId={dialog.requestId}
         onConfirm={(w, u, qtys) => confirmDelivery(dialog.requestId, w, u, qtys)}
         onClose={() => setDialog({ open: false, requestId: null, lines: [] })}
       />
@@ -453,6 +512,22 @@ export default function RequestScreen() {
                                     )}
                                   </div>
                                   <Stepper value={v} onChange={val => setToolQty(t.id, val)} />
+                                  {/* Stock surplus inline warning */}
+                                  {stockWarnings[t.id] && (
+                                    <div className="mt-2 relative">
+                                      <div
+                                        className="text-[11px] px-2.5 py-1.5 rounded-2xl rounded-tl-sm text-neutral-800 font-medium animate-in fade-in slide-in-from-left-2"
+                                        style={{ background: '#FF7F7F' }}
+                                      >
+                                        <span className="flex items-center gap-1.5">
+                                          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                                          {stockWarnings[t.id].message}
+                                        </span>
+                                        {/* speech-bubble tail */}
+                                        <div className="absolute -left-1.5 top-0 w-3 h-3 rotate-45" style={{ background: '#FF7F7F' }} />
+                                      </div>
+                                    </div>
+                                  )}
                                 </li>
                               );
                             })}
@@ -648,6 +723,9 @@ export default function RequestScreen() {
                             {r.rejection_reason ? ` — ${r.rejection_reason}` : ''}
                           </p>
                         )}
+
+                        {/* Comments — facility user can see admin comments and reply */}
+                        <CommentThread requestId={r.id} />
                       </div>
                     </div>
                   </div>

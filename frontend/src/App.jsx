@@ -5,6 +5,7 @@ import { ToolsScreen } from './tools';
 import { ToastProvider, useToast } from './toasts';
 import { AuthProvider, useAuth } from './auth';
 import Login from './Login';
+import UpdateNotifier from './UpdateNotifier';
 import {
   PackageCheck, ClipboardList, Users, Settings, BarChart3,
   FileText, Warehouse, PackageOpen, ArrowRightLeft,
@@ -122,7 +123,7 @@ function Shell() {
               <SidebarItem icon={LayoutGrid}      label="Dashboard"        active={tab==='dashboard'}      onClick={() => go('dashboard', true)} />
               <SidebarItem icon={PackageCheck}    label="Tools"            active={tab==='tools'}          onClick={() => go('tools', true)} />
               <SidebarItem icon={BarChart3}       label="Analysis"         active={tab==='analysis'}       onClick={() => go('analysis', true)} />
-              <SidebarItem icon={TrendingUp}      label="Tools Forecast"   active={tab==='forecast'}       onClick={() => go('forecast', true)} />
+              <SidebarItem icon={TrendingUp}      label="Tools Utilization" active={tab==='forecast'}       onClick={() => go('forecast', true)} />
               <SidebarItem icon={FileText}        label="Reports"          active={tab==='reports'}        onClick={() => go('reports', true)} />
               <SidebarItem icon={Users}           label="Users"            active={tab==='staff'}          onClick={() => go('staff', true)} />
               <SidebarItem icon={Building2}       label="Facility Stocks"  active={tab==='facilitystocks'} onClick={() => go('facilitystocks', true)} />
@@ -159,6 +160,7 @@ function Shell() {
           {tab === 'admin'           && (isAdmin ? <AdminScreen /> : null)}
         </main>
       </div>
+      <UpdateNotifier />
     </div>
   );
 }
