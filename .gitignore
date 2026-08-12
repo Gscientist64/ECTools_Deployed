@@ -8,7 +8,6 @@ venv/
 
 # Node / Frontend
 node_modules/
-frontend/dist/
 frontend/.env
 
 # Environment (contains secrets)

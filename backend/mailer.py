@@ -143,7 +143,7 @@ def notify_facility_supervisor_of_request(request_id, facility_name, requester_n
     db.session.commit()
 
     import os
-    server_url = os.getenv("SERVER_URL", getattr(Config, "FRONTEND_ORIGIN", "http://localhost:5000"))
+    server_url = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or getattr(Config, "FRONTEND_ORIGIN", "http://localhost:5000")
     if not server_url.startswith("http"):
         server_url = f"http://{server_url}"
 
@@ -231,7 +231,9 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
             )
             db.session.add(sa)
 
-        server_url = os.getenv("SERVER_URL", getattr(Config, "FRONTEND_ORIGIN", "http://localhost:5000"))
+        server_url = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or getattr(Config, "FRONTEND_ORIGIN", "http://localhost:5000")
+        if not server_url.startswith("http"):
+            server_url = f"http://{server_url}"
         approve_url = f"{server_url}/api/supervisor/action?token={approve_token}"
         reject_url = f"{server_url}/api/supervisor/action?token={reject_token}"
 
