@@ -23,12 +23,7 @@ import hashlib
 import sys
 from flask import Response, stream_with_context
 
-# PDF Generation imports
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
+# PDF Generation (lazy-imported in create_delivery_note_pdf to survive missing reportlab)
 
 active_connections = []
 connection_queues = {}
@@ -262,6 +257,15 @@ def create_delivery_note_pdf(deliveries, requester, distributor, request_obj):
     Generate PDF delivery note using ReportLab.
     Accepts a LIST of Delivery objects (all from same request) to show multiple tools.
     """
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+    except ImportError:
+        raise RuntimeError("PDF generation unavailable — reportlab library is not installed on the server.")
+
     buffer = BytesIO()
     
     # First delivery for metadata
