@@ -5102,6 +5102,67 @@ def check_app_update():
 
 
 # ---------------------------------------------------------------------------
+# Email Diagnostic (admin only)
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/admin/test-email", methods=["GET"])
+@login_required
+def test_email_diagnostic():
+    if not _is_admin_user(current_user): return _admin_required_json()
+
+    from mailer import send_email, get_supervisors_for_facility
+    import smtplib
+
+    result = {}
+
+    # 1. SMTP config
+    result["smtp_host"] = Config.SMTP_HOST
+    result["smtp_port"] = Config.SMTP_PORT
+    result["smtp_user"] = (Config.SMTP_USER[:3] + "***") if Config.SMTP_USER else "(not set)"
+    result["smtp_from"] = Config.SMTP_FROM
+    result["smtp_password_set"] = bool(Config.SMTP_PASSWORD)
+
+    # 2. Server URL
+    result["server_url"] = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ectools-deployed.onrender.com"
+
+    # 3. SMTP connectivity test
+    try:
+        server = smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=10)
+        server.starttls()
+        if Config.SMTP_USER and Config.SMTP_PASSWORD:
+            server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+        result["smtp_connect"] = "OK"
+        server.quit()
+    except Exception as e:
+        result["smtp_connect"] = f"FAILED: {e}"
+
+    # 4. Test send
+    if Config.SMTP_PASSWORD:
+        ok = send_email(
+            [Config.SMTP_FROM],
+            "[TIMS] Diagnostic Test",
+            "<p>This is a test email from TIMS email diagnostic.</p>"
+        )
+        result["test_send"] = "OK" if ok else "FAILED"
+    else:
+        result["test_send"] = "SKIPPED (no SMTP password)"
+
+    # 5. Supervisors list
+    all_supers = Users.query.filter_by(is_supervisor=True).all()
+    result["supervisors_count"] = len(all_supers)
+    result["supervisors"] = [
+        {"id": s.id, "email": s.email, "facilities": json.loads(s.supervised_facilities or "[]")}
+        for s in all_supers
+    ]
+
+    # 6. S.I Management entries
+    si = SystemSetting.query.filter_by(key="si_management_entries").first()
+    result["si_management"] = json.loads(si.value) if si and si.value else []
+
+    return jsonify(result), 200
+
+
+# ---------------------------------------------------------------------------
 # Supervisor Email Action Handler (clicked from email)
 # ---------------------------------------------------------------------------
 
