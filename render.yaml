@@ -8,6 +8,8 @@ services:
     preDeployCommand: |
       cd backend && FLASK_APP=app:create_app python -m flask db upgrade
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
       - key: PRODUCTION
         value: "1"
       - key: DATABASE_URL
