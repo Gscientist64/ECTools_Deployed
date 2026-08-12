@@ -740,8 +740,8 @@ export const api = {
   getSIManagementSettings: () =>
     fetch(withApi('/admin/settings/si-management'), { credentials: 'include' }).then(r => r.json()),
 
-  updateSIManagementSettings: (email) =>
-    fetch(withApi('/admin/settings/si-management'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ si_management_email: email }) }).then(r => r.json()),
+  updateSIManagementSettings: (data) =>
+    fetch(withApi('/admin/settings/si-management'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(data) }).then(r => r.json()),
 
   listAllFacilities: () =>
     fetch(withApi('/admin/facilities-list'), { credentials: 'include' }).then(r => r.json()),};
