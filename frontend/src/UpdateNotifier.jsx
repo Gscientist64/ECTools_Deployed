@@ -27,37 +27,12 @@ export default function UpdateNotifier() {
   const handleUpdate = async () => {
     if (!update?.download_url) return;
     setDownloading(true);
-    setProgress(0);
-    try {
-      const response = await fetch(update.download_url);
-      if (!response.ok) throw new Error('Download failed');
-      const contentLength = response.headers.get('content-length');
-      const total = parseInt(contentLength, 10);
-      const reader = response.body.getReader();
-      const chunks = [];
-      let received = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total) setProgress(Math.min(99, Math.round((received / total) * 100)));
-      }
+    // Open download in default browser — GitHub blocks CORS on release assets
+    window.open(update.download_url, '_blank');
+    setTimeout(() => {
       setProgress(100);
-      const blob = new Blob(chunks, { type: 'application/vnd.microsoft.portable-executable' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `TIMS_Setup_v${update.latest_version}.exe`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
       setUpToDate(true);
-    } catch (e) {
-      console.error('Update download failed:', e);
-      setDownloading(false);
-    }
+    }, 800);
   };
 
   if (!update || dismissed) return null;
