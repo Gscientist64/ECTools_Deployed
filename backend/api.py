@@ -5113,33 +5113,39 @@ def test_email_diagnostic():
     from mailer import send_email, get_supervisors_for_facility
     import smtplib
 
+    cfg = current_app.config
     result = {}
 
     # 1. SMTP config
-    result["smtp_host"] = Config.SMTP_HOST
-    result["smtp_port"] = Config.SMTP_PORT
-    result["smtp_user"] = (Config.SMTP_USER[:3] + "***") if Config.SMTP_USER else "(not set)"
-    result["smtp_from"] = Config.SMTP_FROM
-    result["smtp_password_set"] = bool(Config.SMTP_PASSWORD)
+    result["smtp_host"] = cfg.get("SMTP_HOST", os.getenv("SMTP_HOST", "smtp.gmail.com"))
+    result["smtp_port"] = int(cfg.get("SMTP_PORT", os.getenv("SMTP_PORT", "587")))
+    smtp_user = os.getenv("SMTP_USER", "")
+    result["smtp_user"] = (smtp_user[:3] + "***") if smtp_user else "(not set)"
+    result["smtp_from"] = os.getenv("SMTP_FROM", "")
+    result["smtp_password_set"] = bool(os.getenv("SMTP_PASSWORD", ""))
 
     # 2. Server URL
     result["server_url"] = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ectools-deployed.onrender.com"
 
     # 3. SMTP connectivity test
+    smtp_host = result["smtp_host"]
+    smtp_port = result["smtp_port"]
     try:
-        server = smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=10)
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
         server.starttls()
-        if Config.SMTP_USER and Config.SMTP_PASSWORD:
-            server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+        if smtp_user and os.getenv("SMTP_PASSWORD"):
+            server.login(smtp_user, os.getenv("SMTP_PASSWORD"))
         result["smtp_connect"] = "OK"
         server.quit()
     except Exception as e:
         result["smtp_connect"] = f"FAILED: {e}"
 
     # 4. Test send
-    if Config.SMTP_PASSWORD:
+    smtp_from = os.getenv("SMTP_FROM", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    if smtp_password:
         ok = send_email(
-            [Config.SMTP_FROM],
+            [smtp_from],
             "[TIMS] Diagnostic Test",
             "<p>This is a test email from TIMS email diagnostic.</p>"
         )
