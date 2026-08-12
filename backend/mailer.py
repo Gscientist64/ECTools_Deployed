@@ -33,16 +33,24 @@ def send_email(to_emails, subject, html_body, text_body=None):
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    try:
-        with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as server:
-            server.starttls()
-            server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-            server.sendmail(Config.SMTP_FROM, to_emails, msg.as_string())
-        print(f"[mailer] Email sent to {len(to_emails)} recipient(s): {subject}")
-        return True
-    except Exception as e:
-        print(f"[mailer] Failed to send email: {e}")
-        return False
+    # Retry up to 3 times (Gmail SMTP occasionally drops connections)
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as server:
+                server.starttls()
+                server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+                server.sendmail(Config.SMTP_FROM, to_emails, msg.as_string())
+            print(f"[mailer] Email sent to {len(to_emails)} recipient(s): {subject}")
+            return True
+        except Exception as e:
+            last_error = e
+            print(f"[mailer] Attempt {attempt} failed: {e}")
+            if attempt < 3:
+                time.sleep(2)  # brief pause before retry
+
+    print(f"[mailer] Failed to send email after 3 attempts: {last_error}")
+    return False
 
 
 def _make_action_token(request_id, reviewer_email, role, action):

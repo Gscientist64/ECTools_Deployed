@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, RefreshCw, X, Check } from 'lucide-react';
 
-const CURRENT_VERSION = '1.0.1';
+const CURRENT_VERSION = '1.0.3';
 
 export default function UpdateNotifier() {
   const [update, setUpdate] = useState(null);

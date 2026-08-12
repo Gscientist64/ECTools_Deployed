@@ -2230,19 +2230,31 @@ def create_request():
 
     db.session.commit()
 
-    # ─── Trigger supervisor emails ───
+    # ─── Trigger supervisor emails (in background thread so request returns fast) ───
     if supervisor_emails:
-        for email in supervisor_emails:
-            try:
-                notify_facility_supervisor_of_request(
-                    request_id=r.id,
-                    facility_name=current_user.facility or "Unknown Facility",
-                    requester_name=current_user.first_name or current_user.username or "Unknown",
-                    tools_list=tools_summary,
-                    supervisor_email=email,
-                )
-            except Exception:
-                current_app.logger.exception(f"Failed to notify supervisor {email}")
+        emails_to_notify = list(supervisor_emails)
+        req_id = r.id
+        facility_name = current_user.facility or "Unknown Facility"
+        requester_name = current_user.first_name or current_user.username or "Unknown"
+        tools_snapshot = list(tools_summary)
+
+        def _send_emails():
+            from mailer import notify_facility_supervisor_of_request
+            for email in emails_to_notify:
+                try:
+                    ok = notify_facility_supervisor_of_request(
+                        request_id=req_id,
+                        facility_name=facility_name,
+                        requester_name=requester_name,
+                        tools_list=tools_snapshot,
+                        supervisor_email=email,
+                    )
+                    if not ok:
+                        current_app.logger.warning(f"Email to {email} failed to send (request #{req_id})")
+                except Exception:
+                    current_app.logger.exception(f"Failed to notify supervisor {email}")
+
+        threading.Thread(target=_send_emails, daemon=True).start()
 
     resp = {"message": "ok", "id": r.id}
     if warn_stock:
