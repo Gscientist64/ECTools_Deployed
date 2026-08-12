@@ -72,6 +72,10 @@ class Config:
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
     SMTP_FROM = os.getenv("SMTP_FROM", "noreply@ecews.org")
 
+    # Resend HTTP email API (preferred over SMTP when a key is set)
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+    RESEND_FROM = os.getenv("RESEND_FROM", "TIMS <onboarding@resend.dev>")
+
     if os.getenv("PRODUCTION", "0") == "1":
         SESSION_COOKIE_SAMESITE = "None"
         SESSION_COOKIE_SECURE = True

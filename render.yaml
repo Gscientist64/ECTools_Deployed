@@ -30,5 +30,9 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "TIMS <onboarding@resend.dev>"
       - key: ADMIN_SIGNUP_KEY
         sync: false

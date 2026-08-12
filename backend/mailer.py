@@ -6,6 +6,8 @@ import hmac
 import os
 import time
 import logging
+import urllib.request
+import urllib.error
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from config import Config
@@ -21,12 +23,67 @@ ACTION_TOKEN_SECRET = os.getenv(
 ).encode("utf-8")
 
 
+def _send_via_resend(to_emails, subject, html_body, text_body):
+    """Send email via the Resend HTTP API. Returns True on success.
+
+    Works from any network (including Render, which blocks SMTP). Uses the
+    standard library only so it bundles cleanly into the .exe.
+    """
+    from_email = Config.RESEND_FROM or "TIMS <onboarding@resend.dev>"
+    payload = json.dumps({
+        "from": from_email,
+        "to": list(to_emails),
+        "subject": subject,
+        "html": html_body,
+        "text": text_body or "",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {Config.RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status == 200:
+            body = resp.read().decode("utf-8", "ignore")
+            logger.info("Resend OK (%s): %s", resp.status, body[:120])
+            return True
+        logger.warning("Resend returned status %s", resp.status)
+        return False
+
+
 def send_email(to_emails, subject, html_body, text_body=None):
-    """Send email to a list of recipients. Returns True on success."""
+    """Send email to a list of recipients. Returns True on success.
+
+    Tries the Resend HTTP API first (when configured), then falls back to SMTP.
+    """
+    if not to_emails:
+        return False
+
+    # Plain text alternative (anti-spam: always include text version)
+    if not text_body:
+        import re
+        text_body = re.sub(r'<[^>]+>', '', html_body)
+        text_body = re.sub(r'\s+', ' ', text_body).strip()
+
+    # 1. Preferred: Resend HTTP API (reliable from .exe and Render alike)
+    if Config.RESEND_API_KEY:
+        try:
+            if _send_via_resend(to_emails, subject, html_body, text_body):
+                return True
+            logger.warning("Resend failed — falling back to SMTP")
+        except urllib.error.HTTPError as e:
+            logger.warning("Resend HTTP error %s: %s — falling back to SMTP",
+                           e.code, e.read().decode("utf-8", "ignore")[:200])
+        except Exception as e:
+            logger.warning("Resend exception %s — falling back to SMTP", e)
+
+    # 2. Fallback: SMTP
     if not Config.SMTP_USER or not Config.SMTP_PASSWORD:
         logger.warning("SMTP not configured — skipping email")
-        return False
-    if not to_emails:
         return False
 
     msg = MIMEMultipart("alternative")
@@ -35,12 +92,6 @@ def send_email(to_emails, subject, html_body, text_body=None):
     msg["To"] = ", ".join(to_emails)
     msg["Date"] = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime())
     msg["Message-ID"] = f"<tims-{int(time.time())}-{hashlib.md5(subject.encode()).hexdigest()[:8]}@{Config.SMTP_FROM.split('@')[-1]}>"
-
-    # Plain text alternative (anti-spam: always include text version)
-    if not text_body:
-        import re
-        text_body = re.sub(r'<[^>]+>', '', html_body)
-        text_body = re.sub(r'\s+', ' ', text_body).strip()
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
