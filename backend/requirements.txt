@@ -25,6 +25,8 @@ gunicorn
 pandas
 xlsxwriter
 reportlab
+xlsxwriter
+reportlab
 
 # Windows desktop (not needed on Render, but harmless)
 waitress
