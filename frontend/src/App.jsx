@@ -6,6 +6,7 @@ import { ToastProvider, useToast } from './toasts';
 import { AuthProvider, useAuth } from './auth';
 import Login from './Login';
 import UpdateNotifier from './UpdateNotifier';
+import { APP_VERSION } from './version';
 import {
   PackageCheck, ClipboardList, Users, Settings, BarChart3,
   FileText, Warehouse, PackageOpen, ArrowRightLeft,
@@ -161,6 +162,9 @@ function Shell() {
         </main>
       </div>
       <UpdateNotifier />
+      <div className="fixed bottom-2 left-2 z-40 text-[11px] font-medium text-neutral-400 dark:text-neutral-600 select-none pointer-events-none">
+        v{APP_VERSION}
+      </div>
     </div>
   );
 }

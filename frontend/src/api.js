@@ -726,6 +726,13 @@ export const api = {
 
   checkAppUpdate: () => fetch(withApi('/app/check-update'), { credentials: 'include' }).then(r => r.json()),
 
+  applyAppUpdate: (data) => fetch(withApi('/app/apply-update'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(r => r.json()),
+
   listSupervisors: () => fetch(withApi('/admin/supervisors'), { credentials: 'include' }).then(r => r.json()),
 
   createSupervisor: (data) =>

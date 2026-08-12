@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import logging
 import webbrowser
 from datetime import datetime
 from flask import Flask, send_from_directory, abort, jsonify, redirect, url_for, request
@@ -29,11 +30,31 @@ def _resolve_dist_folder() -> str:
     return os.path.abspath(os.path.join(here, "..", "frontend", "dist"))
 
 
+def _setup_file_logging(app):
+    """Write logs to a file so the windowed .exe (no console) is diagnosable."""
+    try:
+        log_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TIMS"
+        )
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "tims.log")
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        if not any(isinstance(h, logging.FileHandler) for h in root.handlers):
+            root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        app.logger.info("=== TIMS app started (log: %s) ===", log_path)
+    except Exception:
+        pass
+
+
 def create_app():
     DIST_FOLDER = _resolve_dist_folder()
 
     # IMPORTANT: use /static so top-level routes like /__routes aren't shadowed
     app = Flask(__name__, static_folder=DIST_FOLDER, static_url_path="/static")
+    _setup_file_logging(app)
     app.config.from_object(Config)
     app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
     app.config.setdefault("SESSION_COOKIE_SECURE", False)

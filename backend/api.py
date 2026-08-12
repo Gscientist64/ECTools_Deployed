@@ -2237,22 +2237,28 @@ def create_request():
         facility_name = current_user.facility or "Unknown Facility"
         requester_name = current_user.first_name or current_user.username or "Unknown"
         tools_snapshot = list(tools_summary)
+        # Capture the real Flask app object now — `current_app` is a request-scoped
+        # proxy and is NOT available inside the background thread.
+        flask_app = current_app._get_current_object()
 
         def _send_emails():
             from mailer import notify_facility_supervisor_of_request
             for email in emails_to_notify:
                 try:
-                    ok = notify_facility_supervisor_of_request(
-                        request_id=req_id,
-                        facility_name=facility_name,
-                        requester_name=requester_name,
-                        tools_list=tools_snapshot,
-                        supervisor_email=email,
-                    )
+                    # Push an app context in this thread: mailer hits the DB
+                    # (SupervisorAction) and needs db.session, which is app-context scoped.
+                    with flask_app.app_context():
+                        ok = notify_facility_supervisor_of_request(
+                            request_id=req_id,
+                            facility_name=facility_name,
+                            requester_name=requester_name,
+                            tools_list=tools_snapshot,
+                            supervisor_email=email,
+                        )
                     if not ok:
-                        current_app.logger.warning(f"Email to {email} failed to send (request #{req_id})")
+                        flask_app.logger.warning(f"Email to {email} failed to send (request #{req_id})")
                 except Exception:
-                    current_app.logger.exception(f"Failed to notify supervisor {email}")
+                    flask_app.logger.exception(f"Failed to notify supervisor {email}")
 
         threading.Thread(target=_send_emails, daemon=True).start()
 
@@ -5113,6 +5119,74 @@ def check_app_update():
         return jsonify({"error": "Could not check for updates"}), 500
 
 
+@api_bp.route("/app/apply-update", methods=["POST"])
+@login_required
+def apply_app_update():
+    """Download the new .exe, then spawn a detached batch script that kills this
+    process, replaces the .exe in-place, and restarts it. Only works in the
+    frozen desktop build (PyInstaller onefile), not on Render."""
+    import sys
+    if not getattr(sys, "frozen", False):
+        return jsonify({"ok": False, "error": "Auto-update is only available in the desktop app."}), 400
+
+    data = request.get_json(silent=True) or {}
+    download_url = data.get("download_url")
+    if not download_url:
+        return jsonify({"ok": False, "error": "Missing download_url"}), 400
+
+    import urllib.request
+    import tempfile
+    import subprocess
+    import time
+
+    try:
+        exe_path = sys.executable
+        exe_dir = os.path.dirname(exe_path)
+        new_exe = os.path.join(tempfile.gettempdir(), f"TIMS_update_{int(time.time())}.exe")
+
+        # 1. Download the new .exe to a temp location
+        req = urllib.request.Request(download_url, headers={"User-Agent": "TIMS-Updater/1.0"})
+        with urllib.request.urlopen(req, timeout=600) as resp, open(new_exe, "wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+
+        # 2. Build a batch script that waits, kills this process, swaps the .exe and restarts it.
+        #    PyInstaller onefile runs from a temp extraction, so the on-disk .exe is not locked.
+        pid = os.getpid()
+        bat_path = os.path.join(exe_dir, "update_tims.bat")
+        script = (
+            "@echo off\r\n"
+            "chcp 65001 >nul\r\n"
+            "timeout /t 3 /nobreak >nul\r\n"
+            f"taskkill /F /PID {pid} >nul 2>&1\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
+            f'copy /Y "{new_exe}" "{exe_path}" >nul 2>&1\r\n'
+            f'del "{new_exe}" >nul 2>&1\r\n'
+            f'start "" "{exe_path}"\r\n'
+            'del "%~f0" >nul 2>&1\r\n'
+        )
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write(script)
+
+        # 3. Launch the script detached so the response can reach the frontend first.
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        subprocess.Popen(
+            ["cmd", "/c", bat_path],
+            cwd=exe_dir,
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+
+        return jsonify({"ok": True})
+    except Exception as e:
+        current_app.logger.error(f"Auto-update failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # Email Diagnostic (admin only)
 # ---------------------------------------------------------------------------
@@ -5190,9 +5264,12 @@ def supervisor_email_action():
     token = (request.args.get("token") or "").strip()
     if not token:
         return "<h2>Invalid link</h2><p>No token provided.</p>", 400
-    req_id, email, role, action = _verify_action_token(token)
-    if req_id is None:
-        return f"<h2>Invalid or Expired Link</h2><p>{email}</p>", 400
+    # _verify_action_token returns (request_id, email, role, action) on success
+    # or (None, error_message) on failure — unpack safely to avoid a 500.
+    result = _verify_action_token(token)
+    if result[0] is None:
+        return f"<h2>Invalid or Expired Link</h2><p>{result[1]}</p>", 400
+    req_id, email, role, action = result
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     sa = SupervisorAction.query.filter_by(token_hash=token_hash).first()
     if not sa or sa.action != "pending":

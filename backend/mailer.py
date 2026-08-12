@@ -3,17 +3,28 @@ import smtplib
 import json
 import hashlib
 import hmac
+import os
 import time
+import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from config import Config
 from extensions import db
 
+logger = logging.getLogger("mailer")
+
+# Dedicated secret for approve/reject link signatures. This is intentionally NOT
+# tied to SECRET_KEY: the desktop .exe and Render can have different SECRET_KEY
+# values, which previously made valid links fail with "Invalid signature".
+ACTION_TOKEN_SECRET = os.getenv(
+    "ACTION_TOKEN_SECRET", "tims-action-token-v1-2024-shared-secret"
+).encode("utf-8")
+
 
 def send_email(to_emails, subject, html_body, text_body=None):
     """Send email to a list of recipients. Returns True on success."""
     if not Config.SMTP_USER or not Config.SMTP_PASSWORD:
-        print("[mailer] SMTP not configured — skipping email")
+        logger.warning("SMTP not configured — skipping email")
         return False
     if not to_emails:
         return False
@@ -37,35 +48,39 @@ def send_email(to_emails, subject, html_body, text_body=None):
     last_error = None
     for attempt in range(1, 4):
         try:
-            with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as server:
-                server.starttls()
-                server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
-                server.sendmail(Config.SMTP_FROM, to_emails, msg.as_string())
-            print(f"[mailer] Email sent to {len(to_emails)} recipient(s): {subject}")
+            if Config.SMTP_PORT == 465:
+                # Implicit SSL/TLS on port 465 (works on networks that block 587)
+                with smtplib.SMTP_SSL(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as server:
+                    server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+                    server.sendmail(Config.SMTP_FROM, to_emails, msg.as_string())
+            else:
+                with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=15) as server:
+                    server.starttls()
+                    server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+                    server.sendmail(Config.SMTP_FROM, to_emails, msg.as_string())
+            logger.info("Email sent to %s recipient(s): %s", len(to_emails), subject)
             return True
         except Exception as e:
             last_error = e
-            print(f"[mailer] Attempt {attempt} failed: {e}")
+            logger.warning("Attempt %d failed: %s", attempt, e)
             if attempt < 3:
                 time.sleep(2)  # brief pause before retry
 
-    print(f"[mailer] Failed to send email after 3 attempts: {last_error}")
+    logger.error("Failed to send email after 3 attempts: %s", last_error)
     return False
 
 
 def _make_action_token(request_id, reviewer_email, role, action):
     """Create a time-limited HMAC-signed token for approve/reject actions."""
-    secret = Config.SECRET_KEY.encode("utf-8") if Config.SECRET_KEY else b"tims-default-secret"
     expiry = int(time.time()) + (7 * 24 * 3600)  # 7 days
     payload = f"{request_id}|{reviewer_email}|{role}|{action}|{expiry}"
-    signature = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    signature = hmac.new(ACTION_TOKEN_SECRET, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     token = f"{payload}|{signature}"
     return token
 
 
 def _verify_action_token(token):
     """Verify a supervisor action token. Returns (request_id, email, role, action) or (None, error)."""
-    secret = Config.SECRET_KEY.encode("utf-8") if Config.SECRET_KEY else b"tims-default-secret"
     parts = token.split("|")
     if len(parts) != 6:
         return None, "Invalid token format"
@@ -73,7 +88,7 @@ def _verify_action_token(token):
     request_id, reviewer_email, role, action, expiry_str, signature = parts
     payload = f"{request_id}|{reviewer_email}|{role}|{action}|{expiry_str}"
 
-    expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    expected_sig = hmac.new(ACTION_TOKEN_SECRET, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_sig, signature):
         return None, "Invalid signature"
 

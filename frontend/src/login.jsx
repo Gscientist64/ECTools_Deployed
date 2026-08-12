@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from './auth';
 import { useToast } from './toasts';
 import { LogIn, UserPlus, Eye, EyeOff, Building2, Shield } from 'lucide-react';
+import { APP_VERSION } from './version';
 
 const LOGO_URL = `${import.meta.env.BASE_URL}ecews-logo.png`;
 
@@ -495,6 +496,10 @@ export default function Login() {
             </form>
           )}
         </div>
+      </div>
+
+      <div className="fixed bottom-2 left-2 z-40 text-[11px] font-medium text-neutral-400 dark:text-neutral-600 select-none pointer-events-none">
+        v{APP_VERSION}
       </div>
     </div>
   );
