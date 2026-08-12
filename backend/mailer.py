@@ -142,10 +142,14 @@ def notify_facility_supervisor_of_request(request_id, facility_name, requester_n
             db.session.add(sa)
     db.session.commit()
 
-    import os
-    server_url = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ectools-deployed.onrender.com"
+    import os, socket
+    server_url = (
+        os.getenv("SERVER_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or f"http://{socket.gethostname()}:5000"
+    )
     if not server_url.startswith("http"):
-        server_url = f"https://{server_url}"
+        server_url = f"http://{server_url}"
 
     approve_url = f"{server_url}/api/supervisor/action?token={approve_token}"
     reject_url = f"{server_url}/api/supervisor/action?token={reject_token}"
@@ -231,9 +235,14 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
             )
             db.session.add(sa)
 
-        server_url = os.getenv("SERVER_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://ectools-deployed.onrender.com"
+        import os, socket
+        server_url = (
+            os.getenv("SERVER_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")
+            or f"http://{socket.gethostname()}:5000"
+        )
         if not server_url.startswith("http"):
-            server_url = f"https://{server_url}"
+            server_url = f"http://{server_url}"
         approve_url = f"{server_url}/api/supervisor/action?token={approve_token}"
         reject_url = f"{server_url}/api/supervisor/action?token={reject_token}"
 
