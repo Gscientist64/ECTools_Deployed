@@ -5101,8 +5101,19 @@ def check_duplicate_request():
 # App Update Check
 # ---------------------------------------------------------------------------
 
+# Cache the GitHub release lookup so we don't hammer GitHub's unauthenticated
+# API (60 req/hr/IP) from Render's shared egress IP.
+_update_cache = {"data": None, "at": 0.0}
+_UPDATE_CACHE_TTL = 1800  # 30 minutes
+
+
 @api_bp.route("/app/check-update", methods=["GET"])
 def check_app_update():
+    import time as _time
+    now = _time.time()
+    if _update_cache["data"] and (now - _update_cache["at"]) < _UPDATE_CACHE_TTL:
+        return jsonify(_update_cache["data"])
+
     import urllib.request
     try:
         repo_owner = os.getenv("GITHUB_REPO_OWNER", "Gscientist64")
@@ -5113,9 +5124,15 @@ def check_app_update():
             data = json.loads(resp.read().decode("utf-8"))
             latest_version = data["tag_name"].lstrip("v")
             asset = next((a for a in data.get("assets", []) if a["name"].endswith(".exe")), None)
-            return jsonify({"latest_version": latest_version, "download_url": asset["browser_download_url"] if asset else None, "release_notes": data.get("body", ""), "size": asset.get("size", 0) if asset else 0, "published_at": data.get("published_at", "")})
+            result = {"latest_version": latest_version, "download_url": asset["browser_download_url"] if asset else None, "release_notes": data.get("body", ""), "size": asset.get("size", 0) if asset else 0, "published_at": data.get("published_at", "")}
+            _update_cache["data"] = result
+            _update_cache["at"] = now
+            return jsonify(result)
     except Exception as e:
         current_app.logger.warning(f"Update check failed: {e}")
+        # If we have a cached result, return it so clients aren't left guessing.
+        if _update_cache["data"]:
+            return jsonify(_update_cache["data"])
         return jsonify({"error": "Could not check for updates"}), 500
 
 
