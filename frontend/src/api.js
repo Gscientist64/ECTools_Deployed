@@ -750,6 +750,8 @@ export const api = {
     body: JSON.stringify(data),
   }).then(r => r.json()),
 
+  updateProgress: () => fetch(withApi('/app/update-progress'), { credentials: 'include' }).then(r => r.json()),
+
   listSupervisors: () => fetch(withApi('/admin/supervisors'), { credentials: 'include' }).then(r => r.json()),
 
   createSupervisor: (data) =>

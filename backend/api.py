@@ -5213,6 +5213,9 @@ def check_duplicate_request():
 _update_cache = {"data": None, "at": 0.0}
 _UPDATE_CACHE_TTL = 1800  # 30 minutes
 
+# Live auto-update download progress (updated by the background update thread).
+_update_progress = {"status": "idle", "percent": 0, "message": "", "downloaded": 0, "total": 0}
+
 
 @api_bp.route("/app/check-update", methods=["GET"])
 def check_app_update():
@@ -5246,9 +5249,8 @@ def check_app_update():
 @api_bp.route("/app/apply-update", methods=["POST"])
 @login_required
 def apply_app_update():
-    """Download the new .exe, then spawn a detached batch script that kills this
-    process, replaces the .exe in-place, and restarts it. Only works in the
-    frozen desktop build (PyInstaller onefile), not on Render."""
+    """Start an in-place auto-update in a background thread so the UI can show
+    download progress. Only works in the frozen desktop build (PyInstaller)."""
     import sys
     if not getattr(sys, "frozen", False):
         return jsonify({"ok": False, "error": "Auto-update is only available in the desktop app."}), 400
@@ -5258,38 +5260,79 @@ def apply_app_update():
     if not download_url:
         return jsonify({"ok": False, "error": "Missing download_url"}), 400
 
+    import threading
+    flask_app = current_app._get_current_object()
+    threading.Thread(target=_run_update, args=(flask_app, download_url), daemon=True).start()
+    return jsonify({"ok": True, "status": "started"}), 200
+
+
+@api_bp.route("/app/update-progress", methods=["GET"])
+@login_required
+def update_progress():
+    return jsonify(_update_progress), 200
+
+
+def _run_update(flask_app, download_url):
+    """Download the new .exe (reporting progress), then spawn a detached batch
+    that kills this process (child + bootloader parent), replaces the .exe
+    in-place, and restarts it."""
     import urllib.request
     import tempfile
     import subprocess
+    import sys
+    import os
     import time
 
     try:
+        _update_progress.update(status="downloading", percent=0, message="Downloading update…", downloaded=0, total=0)
+
         exe_path = sys.executable
         exe_dir = os.path.dirname(exe_path)
         new_exe = os.path.join(tempfile.gettempdir(), f"TIMS_update_{int(time.time())}.exe")
 
-        # 1. Download the new .exe to a temp location
+        # 1. Download with progress
         req = urllib.request.Request(download_url, headers={"User-Agent": "TIMS-Updater/1.0"})
-        with urllib.request.urlopen(req, timeout=600) as resp, open(new_exe, "wb") as f:
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            _update_progress["total"] = total
+            downloaded = 0
+            with open(new_exe, "wb") as f:
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    _update_progress["downloaded"] = downloaded
+                    if total:
+                        _update_progress["percent"] = min(99, int(downloaded * 100 / total))
 
-        # 2. Build a batch script that waits, kills this process, swaps the .exe and restarts it.
-        #    PyInstaller onefile runs from a temp extraction, so the on-disk .exe is not locked.
-        pid = os.getpid()
+        _update_progress.update(percent=99, status="installing", message="Installing update…")
+
+        # 2. Build a robust batch script.
+        #    Kill the Python child first, then the bootloader parent (so the on-disk
+        #    exe is released), retry the copy (the exe may be briefly locked), then start.
+        child_pid = os.getpid()
+        parent_pid = os.getppid()
         bat_path = os.path.join(exe_dir, "update_tims.bat")
         script = (
             "@echo off\r\n"
             "chcp 65001 >nul\r\n"
+            'echo [%date% %time%] update script started >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
+            f"taskkill /F /PID {child_pid} >nul 2>&1\r\n"
+            f"taskkill /F /PID {parent_pid} >nul 2>&1\r\n"
             "timeout /t 3 /nobreak >nul\r\n"
-            f"taskkill /F /PID {pid} >nul 2>&1\r\n"
-            "timeout /t 2 /nobreak >nul\r\n"
+            "set /a R=0\r\n"
+            ":copy_loop\r\n"
             f'copy /Y "{new_exe}" "{exe_path}" >nul 2>&1\r\n'
+            f'if exist "{exe_path}" goto copied\r\n'
+            "set /a R+=1\r\n"
+            "if %R% LSS 8 ( timeout /t 1 /nobreak >nul & goto copy_loop )\r\n"
+            ":copied\r\n"
+            'echo [%date% %time%] exe replaced, restarting >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
             f'del "{new_exe}" >nul 2>&1\r\n'
             f'start "" "{exe_path}"\r\n'
+            'echo [%date% %time%] done >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
             'del "%~f0" >nul 2>&1\r\n'
         )
         with open(bat_path, "w", encoding="utf-8") as f:
@@ -5305,10 +5348,10 @@ def apply_app_update():
             close_fds=True,
         )
 
-        return jsonify({"ok": True})
+        _update_progress.update(status="restarting", percent=100, message="Restarting app…")
     except Exception as e:
-        current_app.logger.error(f"Auto-update failed: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        _update_progress.update(status="error", message=str(e))
+        flask_app.logger.error("Auto-update failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
