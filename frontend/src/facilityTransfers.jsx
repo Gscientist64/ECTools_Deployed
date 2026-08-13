@@ -43,7 +43,7 @@ function InitiateModal({ tools, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.adminFacilities().then(d => setFacilities(Array.isArray(d) ? d : d.facilities || [])).catch(() => {});
+    api.facilities().then(d => setFacilities(Array.isArray(d) ? d : [])).catch(() => {});
     api.myStock().then(data => {
       const map = {};
       (Array.isArray(data) ? data : []).forEach(s => { map[s.tool_id] = s.quantity ?? 0; });

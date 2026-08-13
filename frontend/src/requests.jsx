@@ -302,14 +302,21 @@ export default function RequestScreen() {
 
   const setToolQty = (id, val) => {
     setQty(q => ({ ...q, [id]: val }));
-    // Real-time stock check — show inline warning bubble near the tool
+    // Real-time stock check — block tools already in sufficient stock, warn otherwise
     const numVal = parseInt(val, 10);
     if (numVal > 0) {
       api.checkStockBeforeRequest(id, numVal).then(res => {
-        if (res && res.warn) {
-          setStockWarnings(w => ({ ...w, [id]: { message: res.message || `You still have ${res.current_stock} in stock`, current_stock: res.current_stock } }));
-          // Auto-dismiss after 7 seconds
-          setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 7000);
+        if (res && res.block) {
+          // Facility already has enough stock — do NOT add to cart, notify only
+          setQty(q => ({ ...q, [id]: 0 }));
+          setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; });
+          push(res.message || `You already have ${res.current_stock} in stock`, 'error');
+        } else {
+          if (res && res.warn) {
+            setStockWarnings(w => ({ ...w, [id]: { message: res.message || `You still have ${res.current_stock} in stock`, current_stock: res.current_stock } }));
+            // Auto-dismiss after 7 seconds
+            setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 7000);
+          }
         }
       }).catch(() => {});
     } else {

@@ -507,6 +507,18 @@ def list_facilities():
     return jsonify([r[0] for r in rows]), 200
 
 
+@api_bp.route("/facilities", methods=["GET"])
+@login_required
+def list_public_facilities():
+    """List all unique facilities for any logged-in user (e.g., transfer dropdowns)."""
+    rows = db.session.query(Users.facility).filter(
+        Users.facility.isnot(None),
+        Users.facility != "",
+        Users.facility != "Supervisor",
+    ).distinct().order_by(Users.facility).all()
+    return jsonify([r[0] for r in rows]), 200
+
+
 # -----------------------
 # My Inventory (Facility user)
 # -----------------------
@@ -1462,6 +1474,42 @@ def admin_facility_inventory(facility_name):
     return jsonify({"facility": facility_name, "tools": result}), 200
 
 
+@api_bp.route("/admin/facility-stock", methods=["PUT"])
+@login_required
+def admin_update_facility_stock():
+    """Admin: edit the current stock balance for a tool in a facility.
+    Accepts { facility_stock_id } or { tool_id, facility }, plus optional
+    opening_balance / qty_received. Creates the row if it doesn't exist."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    data = _json_body()
+    fs_id = _safe_int(data.get("facility_stock_id"))
+    tool_id = _safe_int(data.get("tool_id"))
+    facility = (data.get("facility") or "").strip()
+    qty = _safe_int(data.get("quantity"), 0)
+
+    fs = None
+    if fs_id:
+        fs = FacilityStock.query.get(fs_id)
+    elif tool_id and facility:
+        fs = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
+
+    if not fs:
+        if tool_id and facility:
+            fs = FacilityStock(tool_id=tool_id, facility=facility, quantity=qty, opening_balance=0, qty_received=0)
+            db.session.add(fs)
+        else:
+            return jsonify({"error": "Facility stock record not found"}), 404
+
+    fs.quantity = qty
+    for field in ("opening_balance", "qty_received"):
+        if data.get(field) is not None:
+            setattr(fs, field, _safe_int(data[field], 0))
+    db.session.commit()
+    return jsonify({"message": "Stock updated", "facility_stock_id": fs.id, "quantity": fs.quantity}), 200
+
+
 @api_bp.route("/inventory/stocktake", methods=["GET"])
 @login_required
 def stocktake_summary():
@@ -2224,6 +2272,7 @@ def create_request():
         ))
         tool = Tool.query.get(int(tid))
         tools_summary.append({
+            "tool_id": int(tid),
             "name": tool.name if tool else "Unknown Tool",
             "quantity": qty,
         })
@@ -5062,6 +5111,20 @@ def export_physical_counts():
 # Stock Check Before Request
 # ---------------------------------------------------------------------------
 
+def _stock_threshold_for_tool(tool):
+    """Category-based stock threshold: Forms 5, Registers 3, Cards 20, everything else 5."""
+    if tool is None or tool.category is None:
+        return 5
+    cat = (tool.category.name or "").strip().lower()
+    if cat == "form":
+        return 5
+    if cat == "register":
+        return 3
+    if cat == "card":
+        return 20
+    return 5
+
+
 @api_bp.route("/requests/check-stock", methods=["POST"])
 @login_required
 def check_stock_before_request():
@@ -5069,14 +5132,58 @@ def check_stock_before_request():
     tool_id = _safe_int(data.get("tool_id"))
     facility = current_user.facility
     if not facility or not tool_id:
-        return jsonify({"warn": False}), 200
+        return jsonify({"warn": False, "block": False}), 200
     tool = Tool.query.get(tool_id)
-    threshold = tool.low_stock_threshold if tool and tool.low_stock_threshold is not None else 5
+    threshold = _stock_threshold_for_tool(tool)
     stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
     current_qty = stock.quantity if stock else 0
     if current_qty > threshold:
-        return jsonify({"warn": True, "message": f"You still have {current_qty} units of '{tool.name if tool else 'this tool'}' in stock (threshold: {threshold}). Please update utilization before requesting.", "current_stock": current_qty, "threshold": threshold}), 200
-    return jsonify({"warn": False}), 200
+        return jsonify({
+            "warn": True,
+            "block": True,
+            "message": f"You already have {current_qty} units of '{tool.name if tool else 'this tool'}' in stock, so it was not added to your request.",
+            "current_stock": current_qty,
+            "threshold": threshold,
+        }), 200
+    return jsonify({"warn": False, "block": False}), 200
+
+
+# ---------------------------------------------------------------------------
+# Smart Reminders (login nudges)
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/reminders", methods=["GET"])
+@login_required
+def my_reminders():
+    """Smart login nudges for facility users: deliveries awaiting confirmation
+    and tools running low on stock."""
+    facility = current_user.facility or ""
+
+    pending_count = Delivery.query.filter_by(received_by=current_user.id, is_delivered=False).count()
+
+    low_stock = []
+    if facility:
+        stocks = FacilityStock.query.filter_by(facility=facility).all()
+        for fs in stocks:
+            # Skip tools the facility has never actually received — not a "low stock" nudge
+            if fs.qty_received <= 0 and fs.quantity <= 0:
+                continue
+            tool = Tool.query.get(fs.tool_id)
+            thr = _stock_threshold_for_tool(tool)
+            if fs.quantity <= thr:
+                low_stock.append({
+                    "tool_id": fs.tool_id,
+                    "name": tool.name if tool else "Unknown",
+                    "quantity": fs.quantity,
+                    "threshold": thr,
+                })
+        low_stock.sort(key=lambda x: x["quantity"])
+
+    return jsonify({
+        "pending_deliveries": pending_count,
+        "low_stock": low_stock[:5],
+    }), 200
+
 
 
 # ---------------------------------------------------------------------------
@@ -5275,25 +5382,102 @@ def test_email_diagnostic():
 # Supervisor Email Action Handler (clicked from email)
 # ---------------------------------------------------------------------------
 
-@api_bp.route("/supervisor/action", methods=["GET"])
+def _supervisor_page(title, message, kind="neutral"):
+    colors = {"ok": "#059669", "err": "#dc2626", "neutral": "#1e3a8a"}
+    accent = colors.get(kind, "#1e3a8a")
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:560px;margin:40px auto;background:#ffffff;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.08);overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);padding:28px;text-align:center;">
+    <h1 style="color:#ffffff;margin:0;font-size:22px;">{title}</h1>
+  </div>
+  <div style="padding:28px;text-align:center;color:#334155;font-size:15px;line-height:1.6;">{message}</div>
+</div></body></html>"""
+
+
+def _supervisor_confirm_page(req_id, facility, requester_name, role_label, action, token, tools_list):
+    from mailer import _render_tools_table, _esc
+    is_approve = action == "approved"
+    action_word = "Approve" if is_approve else "Reject"
+    accent = "#059669" if is_approve else "#dc2626"
+    emoji = "&#10003;" if is_approve else "&#10007;"
+    table = _render_tools_table(tools_list, facility, show_stock=True)
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.08);overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);padding:32px 40px;">
+    <div style="font-size:12px;color:#93c5fd;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">ECEWS Tools Inventory</div>
+    <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{role_label} Review</h1>
+    <p style="margin:8px 0 0;color:#bfdbfe;font-size:14px;">Request #{req_id} &mdash; {_esc(facility)}</p>
+  </div>
+  <div style="padding:32px 40px;">
+    <p style="margin:0 0 20px;color:#334155;font-size:15px;line-height:1.6;">
+      <strong>{_esc(requester_name)}</strong> from <strong>{_esc(facility)}</strong> has submitted a request.
+      Please confirm the action below. No action is taken until you click the button.
+    </p>
+    {table}
+    <p style="margin:20px 0 8px;color:#64748b;font-size:13px;line-height:1.6;">
+      Clicking the button below will <strong>{action_word.lower()}</strong> this request.
+    </p>
+    <form method="POST" action="/api/supervisor/action" style="margin-top:12px;">
+      <input type="hidden" name="token" value="{token}" />
+      <button type="submit" style="width:100%;background:{accent};color:#ffffff;border:none;padding:16px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">{emoji}&nbsp; Confirm {action_word}</button>
+    </form>
+  </div>
+  <div style="padding:20px 40px;background-color:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:12px;">TIMS &mdash; Tools Inventory Management System</div>
+</div></body></html>"""
+
+
+@api_bp.route("/supervisor/action", methods=["GET", "POST"])
 def supervisor_email_action():
-    from mailer import _verify_action_token, notify_si_management_of_request
-    token = (request.args.get("token") or "").strip()
+    from mailer import _verify_action_token, notify_si_management_of_request, _esc
+
+    # POST performs the action; GET only shows a confirmation page (no action),
+    # so email security scanners that fetch links can never auto-approve.
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        token = (request.form.get("token") or data.get("token") or "").strip()
+    else:
+        token = (request.args.get("token") or "").strip()
+
     if not token:
-        return "<h2>Invalid link</h2><p>No token provided.</p>", 400
+        return _supervisor_page("Invalid Link", "No token was provided."), 400
+
     # _verify_action_token returns (request_id, email, role, action) on success
-    # or (None, error_message) on failure — unpack safely to avoid a 500.
+    # or (None, error_message) on failure.
     result = _verify_action_token(token)
     if result[0] is None:
-        return f"<h2>Invalid or Expired Link</h2><p>{result[1]}</p>", 400
+        return _supervisor_page("Invalid or Expired Link", _esc(result[1])), 400
     req_id, email, role, action = result
+
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     sa = SupervisorAction.query.filter_by(token_hash=token_hash).first()
     if not sa or sa.action != "pending":
-        return "<h2>Link Already Used</h2><p>This approve/reject link has already been processed.</p>", 400
+        return _supervisor_page("Link Already Used", "This approve/reject link has already been processed."), 400
+
     request_obj = RequestModel.query.get(req_id)
     if not request_obj:
-        return "<h2>Request Not Found</h2>", 404
+        return _supervisor_page("Request Not Found", "The request associated with this link no longer exists."), 404
+
+    requester = Users.query.get(request_obj.user_id)
+    facility_name = requester.facility if requester else "Unknown Facility"
+    tools_rows = RequestedTool.query.filter_by(request_id=req_id).all()
+    tools_list = [{
+        "tool_id": rt.tool_id,
+        "name": (Tool.query.get(rt.tool_id).name if Tool.query.get(rt.tool_id) else "Unknown"),
+        "quantity": rt.quantity,
+    } for rt in tools_rows]
+
+    # GET: show confirmation page (do NOT act)
+    if request.method == "GET":
+        role_label = "Facility Supervisor" if role == "facility_supervisor" else "S.I. Management"
+        return _supervisor_confirm_page(req_id, facility_name,
+                                        requester.first_name if requester else "Unknown",
+                                        role_label, action, token, tools_list), 200
+
+    # POST: perform the action
     if action == "approved":
         sa.action = "approved"
         sa.created_at = datetime.utcnow()
@@ -5303,21 +5487,24 @@ def supervisor_email_action():
                 request_obj.status = "Pending S.I Review"
                 db.session.commit()
                 try:
-                    requester = Users.query.get(request_obj.user_id)
-                    tools = RequestedTool.query.filter_by(request_id=req_id).all()
-                    tools_list = [{"name": (Tool.query.get(rt.tool_id).name if Tool.query.get(rt.tool_id) else "Unknown"), "quantity": rt.quantity} for rt in tools]
-                    notify_si_management_of_request(request_id=req_id, facility_name=requester.facility if requester else "Unknown", requester_name=requester.first_name if requester else "Unknown", tools_list=tools_list, supervisor_name=email)
+                    notify_si_management_of_request(
+                        request_id=req_id,
+                        facility_name=facility_name,
+                        requester_name=requester.first_name if requester else "Unknown",
+                        tools_list=tools_list,
+                        supervisor_name=email,
+                    )
                 except Exception:
                     current_app.logger.exception("Failed to notify S.I Management")
-                return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your approval has been recorded. Forwarded to S.I Management.</p></body></html>", 200
+                return _supervisor_page("Approved", "Your approval has been recorded. The request has been forwarded to S.I. Management.", "ok"), 200
             else:
                 request_obj.status = "Pending"
                 db.session.commit()
-                return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your approval has been recorded. Forwarded to admin.</p></body></html>", 200
+                return _supervisor_page("Approved", "Your approval has been recorded. The request has been forwarded to admin.", "ok"), 200
         elif role == "si_management":
             request_obj.status = "Pending"
             db.session.commit()
-            return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#059669;'>Approved</h1><p>Your S.I approval has been recorded. Sent to admin.</p></body></html>", 200
+            return _supervisor_page("Approved", "Your S.I. approval has been recorded. The request has been sent to admin.", "ok"), 200
     elif action == "rejected":
         sa.action = "rejected"
         sa.created_at = datetime.utcnow()
@@ -5328,8 +5515,8 @@ def supervisor_email_action():
             ln.status = "Rejected"
         _audit("supervisor_reject", "request", req_id, {"role": role, "email": email})
         db.session.commit()
-        return "<html><body style='font-family:Arial,sans-serif;text-align:center;padding:40px;'><h1 style='color:#dc2626;'>Rejected</h1><p>The request has been rejected.</p></body></html>", 200
-    return "<h2>Unknown action</h2>", 400
+        return _supervisor_page("Rejected", "The request has been rejected.", "err"), 200
+    return _supervisor_page("Unknown Action", ""), 400
 
 
 # ---------------------------------------------------------------------------

@@ -197,40 +197,107 @@ def _verify_action_token(token):
     return int(request_id), reviewer_email, role, action
 
 
-def _base_email_template(title, subtitle, content_html, action_url=None, action_text=None):
-    """Shared branded HTML email wrapper."""
-    action_block = ""
-    if action_url and action_text:
-        action_block = f"""
-        <div style="text-align:center;margin:24px 0;">
-            <a href="{action_url}" style="display:inline-block;background:#1a237e;color:white;text-decoration:none;padding:14px 32px;border-radius:12px;font-weight:600;font-size:15px;">
-                {action_text}
-            </a>
-        </div>
-        """
+def _esc(text):
+    """Escape a value for safe insertion into HTML."""
+    if text is None:
+        return ""
+    return (str(text)
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;'))
 
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="utf-8"></head>
-    <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;background:#f5f5f5;">
-    <div style="max-width:560px;margin:20px auto;background:white;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-        <div style="background:linear-gradient(135deg,#1a237e,#283593);padding:28px 32px;">
-            <h2 style="color:white;margin:0;font-size:20px;">{title}</h2>
-            <p style="color:#c5cae9;margin:8px 0 0;font-size:14px;">{subtitle}</p>
-        </div>
-        <div style="padding:24px 32px;">
-            {content_html}
-            {action_block}
-            <p style="color:#9ca3af;font-size:12px;text-align:center;margin-top:24px;border-top:1px solid #e5e7eb;padding-top:16px;">
-                This is an automated notification from <strong>TIMS</strong>.<br>
-                This link is valid for 7 days and can only be used once.
-            </p>
-        </div>
-    </div>
-    </body>
-    </html>
-    """
+
+def _get_server_url():
+    import os, socket
+    url = (
+        os.getenv("SERVER_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or f"http://{socket.gethostname()}:5000"
+    )
+    if not url.startswith("http"):
+        url = f"http://{url}"
+    return url.rstrip("/")
+
+
+def _available_stock(facility_name, tool_id):
+    """Return available facility stock for a tool, or None if unknown."""
+    if not facility_name or not tool_id:
+        return None
+    try:
+        from models import FacilityStock
+        fs = FacilityStock.query.filter_by(facility=facility_name, tool_id=int(tool_id)).first()
+        return fs.quantity if fs is not None else None
+    except Exception:
+        return None
+
+
+def _render_tools_table(tools_list, facility_name=None, show_stock=True):
+    """Render a modern table of requested tools with optional Available Stock column."""
+    stock_col = '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Available</th>' if show_stock else ""
+    rows = []
+    for t in tools_list:
+        name = _esc(t.get("name", "Unknown"))
+        qty = t.get("quantity", 0)
+        stock = "&mdash;"
+        if show_stock:
+            st = _available_stock(facility_name, t.get("tool_id"))
+            stock = (str(st) if st is not None else "&mdash;")
+        stock_td = f'<td style="padding:12px 16px;text-align:center;color:#64748b;font-size:14px;">{stock}</td>' if show_stock else ""
+        rows.append(
+            f"<tr style=\"border-bottom:1px solid #f1f5f9;\">"
+            f'<td style="padding:12px 16px;color:#334155;font-size:14px;">{name}</td>'
+            f'<td style="padding:12px 16px;text-align:center;color:#334155;font-size:14px;font-weight:600;">{qty}</td>'
+            f"{stock_td}"
+            "</tr>"
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin:16px 0 24px;">'
+        '<thead><tr style="background:#f8fafc;">'
+        '<th style="padding:12px 16px;text-align:left;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Tool / Item</th>'
+        '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Requested</th>'
+        f"{stock_col}"
+        '</tr></thead><tbody>'
+        f"{''.join(rows)}"
+        '</tbody></table>'
+    )
+
+
+def _action_buttons(approve_url, reject_url, approve_label="Approve Request", reject_label="Reject Request"):
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;"><tr>'
+        f'<td align="center" style="padding:0 6px;"><a href="{approve_url}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;padding:14px 30px;border-radius:12px;font-weight:600;font-size:14px;">&#10003;&nbsp; {approve_label}</a></td>'
+        f'<td align="center" style="padding:0 6px;"><a href="{reject_url}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;padding:14px 30px;border-radius:12px;font-weight:600;font-size:14px;">&#10007;&nbsp; {reject_label}</a></td>'
+        '</tr></table>'
+    )
+
+
+def _base_email_template(title, subtitle, content_html, action_buttons_html=""):
+    """Shared modern branded HTML email wrapper."""
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;">
+    <tr><td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,0.08);">
+        <tr><td style="background:linear-gradient(135deg,#0f172a,#1e3a8a);padding:36px 40px;">
+          <div style="font-size:12px;color:#93c5fd;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">ECEWS Tools Inventory</div>
+          <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;line-height:1.3;">{title}</h1>
+          <p style="margin:8px 0 0;color:#bfdbfe;font-size:14px;">{subtitle}</p>
+        </td></tr>
+        <tr><td style="padding:32px 40px;">
+          {content_html}
+          {action_buttons_html}
+        </td></tr>
+        <tr><td style="padding:20px 40px;background-color:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:12px;line-height:1.6;">
+          This is an automated message from the <strong>TIMS</strong> &mdash; Tools Inventory Management System.<br/>
+          This link is valid for 7 days and can only be used once.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
 
 
 def notify_facility_supervisor_of_request(request_id, facility_name, requester_name, tools_list, supervisor_email):
@@ -239,14 +306,6 @@ def notify_facility_supervisor_of_request(request_id, facility_name, requester_n
         return False
 
     from models import SupervisorAction
-
-    tools_html = "".join(
-        f"""<tr>
-            <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">{t['name']}</td>
-            <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600;">{t['quantity']}</td>
-        </tr>"""
-        for t in tools_list
-    )
 
     approve_token = _make_action_token(request_id, supervisor_email, "facility_supervisor", "approved")
     reject_token = _make_action_token(request_id, supervisor_email, "facility_supervisor", "rejected")
@@ -264,46 +323,23 @@ def notify_facility_supervisor_of_request(request_id, facility_name, requester_n
             db.session.add(sa)
     db.session.commit()
 
-    import os, socket
-    server_url = (
-        os.getenv("SERVER_URL")
-        or os.getenv("RENDER_EXTERNAL_URL")
-        or f"http://{socket.gethostname()}:5000"
-    )
-    if not server_url.startswith("http"):
-        server_url = f"http://{server_url}"
-
+    server_url = _get_server_url()
     approve_url = f"{server_url}/api/supervisor/action?token={approve_token}"
     reject_url = f"{server_url}/api/supervisor/action?token={reject_token}"
 
     content = f"""
-        <p style="color:#374151;font-size:15px;line-height:1.6;">
-            <strong>{requester_name}</strong> from <strong>{facility_name}</strong> has submitted a request.
-            Please review and approve or reject.
+        <p style="margin:0 0 20px;color:#334155;font-size:15px;line-height:1.6;">
+            <strong>{_esc(requester_name)}</strong> from <strong>{_esc(facility_name)}</strong> has submitted a request.
+            Please review the items below and approve or reject.
         </p>
-        <table style="width:100%;border-collapse:collapse;margin:20px 0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-            <thead>
-                <tr style="background:#f3f4f6;">
-                    <th style="padding:12px 14px;text-align:left;font-size:13px;color:#6b7280;text-transform:uppercase;">Tool / Item</th>
-                    <th style="padding:12px 14px;text-align:center;font-size:13px;color:#6b7280;text-transform:uppercase;">Qty</th>
-                </tr>
-            </thead>
-            <tbody>{tools_html}</tbody>
-        </table>
-        <div style="display:flex;gap:12px;margin:20px 0;">
-            <a href="{approve_url}" style="flex:1;display:block;text-align:center;background:#059669;color:white;text-decoration:none;padding:14px 20px;border-radius:12px;font-weight:600;font-size:14px;">
-                &#x2705; Approve Request
-            </a>
-            <a href="{reject_url}" style="flex:1;display:block;text-align:center;background:#dc2626;color:white;text-decoration:none;padding:14px 20px;border-radius:12px;font-weight:600;font-size:14px;">
-                &#x274C; Reject Request
-            </a>
-        </div>
+        {_render_tools_table(tools_list, facility_name, show_stock=True)}
     """
 
     html = _base_email_template(
-        title="&#x1F4CB; New Request Requires Your Review",
-        subtitle=f"Request #{request_id} &mdash; {facility_name}",
-        content_html=content
+        title="New Request Requires Your Review",
+        subtitle=f"Request #{request_id} &mdash; {_esc(facility_name)}",
+        content_html=content,
+        action_buttons_html=_action_buttons(approve_url, reject_url, "Approve Request", "Reject Request"),
     )
 
     return send_email([supervisor_email], f"[TIMS] Action Required: Request #{request_id} &mdash; {facility_name}", html)
@@ -327,16 +363,21 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
     if not entries:
         return False
 
-    tools_html = "".join(
-        f"""<tr>
-            <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">{t['name']}</td>
-            <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:600;">{t['quantity']}</td>
-        </tr>"""
-        for t in tools_list
-    )
+    # Deduplicate S.I. entries case-insensitively (email addresses are case-insensitive)
+    seen = set()
+    unique_entries = []
+    for entry in entries:
+        em = (entry.get("email") or "").strip()
+        if not em:
+            continue
+        key = em.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_entries.append(entry)
+    entries = unique_entries
 
     from models import SupervisorAction
-    import os
 
     # Send to each S.I Management entry
     for entry in entries:
@@ -348,55 +389,34 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
 
         for token in [approve_token, reject_token]:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
-            sa = SupervisorAction(
-                request_id=request_id,
-                reviewer_email=si_email,
-                reviewer_role="si_management",
-                action="pending",
-                token_hash=token_hash
-            )
-            db.session.add(sa)
+            if not SupervisorAction.query.filter_by(token_hash=token_hash).first():
+                sa = SupervisorAction(
+                    request_id=request_id,
+                    reviewer_email=si_email,
+                    reviewer_role="si_management",
+                    action="pending",
+                    token_hash=token_hash
+                )
+                db.session.add(sa)
 
-        import os, socket
-        server_url = (
-            os.getenv("SERVER_URL")
-            or os.getenv("RENDER_EXTERNAL_URL")
-            or f"http://{socket.gethostname()}:5000"
-        )
-        if not server_url.startswith("http"):
-            server_url = f"http://{server_url}"
+        server_url = _get_server_url()
         approve_url = f"{server_url}/api/supervisor/action?token={approve_token}"
         reject_url = f"{server_url}/api/supervisor/action?token={reject_token}"
 
         content = f"""
-            <p style="color:#374151;font-size:15px;line-height:1.6;">
-                A request from <strong>{requester_name}</strong> at <strong>{facility_name}</strong>
+            <p style="margin:0 0 20px;color:#334155;font-size:15px;line-height:1.6;">
+                A request from <strong>{_esc(requester_name)}</strong> at <strong>{_esc(facility_name)}</strong>
                 has been <span style="color:#059669;font-weight:600;">approved</span> by the facility supervisor
-                ({supervisor_name}). Please review for final sign-off.
+                ({_esc(supervisor_name)}). Please review for final sign-off.
             </p>
-            <table style="width:100%;border-collapse:collapse;margin:20px 0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-                <thead>
-                    <tr style="background:#f3f4f6;">
-                        <th style="padding:12px 14px;text-align:left;font-size:13px;color:#6b7280;">Tool / Item</th>
-                        <th style="padding:12px 14px;text-align:center;font-size:13px;color:#6b7280;">Qty</th>
-                    </tr>
-                </thead>
-                <tbody>{tools_html}</tbody>
-            </table>
-            <div style="display:flex;gap:12px;margin:20px 0;">
-                <a href="{approve_url}" style="flex:1;display:block;text-align:center;background:#059669;color:white;text-decoration:none;padding:14px 20px;border-radius:12px;font-weight:600;font-size:14px;">
-                    &#x2705; Approve
-                </a>
-                <a href="{reject_url}" style="flex:1;display:block;text-align:center;background:#dc2626;color:white;text-decoration:none;padding:14px 20px;border-radius:12px;font-weight:600;font-size:14px;">
-                    &#x274C; Reject
-                </a>
-            </div>
+            {_render_tools_table(tools_list, facility_name, show_stock=True)}
         """
 
         html = _base_email_template(
-            title="&#x1F50D; S.I Management Review Required",
+            title="S.I Management Review Required",
             subtitle=f"Request #{request_id} &mdash; Approved by Facility Supervisor",
-            content_html=content
+            content_html=content,
+            action_buttons_html=_action_buttons(approve_url, reject_url, "Approve", "Reject"),
         )
 
         send_email([si_email], f"[TIMS] S.I Review: Request #{request_id} &mdash; {facility_name}", html)
@@ -406,21 +426,29 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
 
 
 def get_supervisors_for_facility(facility_name):
-    """Collect all supervisor emails for a given facility."""
+    """Collect all supervisor emails for a given facility (case-insensitive dedup)."""
     from models import Users
 
     emails = []
+    seen = set()
+
+    def _add(email):
+        if not email:
+            return
+        norm = email.strip().lower()
+        if norm in seen:
+            return
+        seen.add(norm)
+        emails.append(email.strip())
 
     supervisors = Users.query.filter_by(is_supervisor=True).all()
     for sup in supervisors:
         facilities = json.loads(sup.supervised_facilities or "[]")
         if not facilities or facility_name in facilities:
-            if sup.email:
-                emails.append(sup.email)
+            _add(sup.email)
 
     facility_users = Users.query.filter_by(facility=facility_name).all()
     for u in facility_users:
-        if u.supervisor_email and u.supervisor_email not in emails:
-            emails.append(u.supervisor_email)
+        _add(u.supervisor_email)
 
-    return list(set(emails))
+    return emails

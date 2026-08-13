@@ -550,6 +550,11 @@ export const api = {
     return asJson(r);
   },
 
+  async facilities() {
+    const r = await fetch(withApi('/facilities'), { credentials: 'include' });
+    return asJson(r);
+  },
+
   async adminFacilityStock(facilityName) {
     const r = await fetch(withApi(`/admin/facility/${encodeURIComponent(facilityName)}/stock`), { credentials: 'include' });
     return asJson(r);
@@ -562,6 +567,16 @@ export const api = {
 
   async adminFacilityPhysicalCounts(facilityName) {
     const r = await fetch(withApi(`/admin/facility/${encodeURIComponent(facilityName)}/physical-counts`), { credentials: 'include' });
+    return asJson(r);
+  },
+
+  async updateFacilityStock(data) {
+    const r = await fetch(withApi('/admin/facility-stock'), {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
     return asJson(r);
   },
 
@@ -725,6 +740,8 @@ export const api = {
     }),
 
   checkAppUpdate: () => fetch(withApi('/app/check-update'), { credentials: 'include' }).then(r => r.json()),
+
+  reminders: () => fetch(withApi('/reminders'), { credentials: 'include' }).then(r => r.json()),
 
   applyAppUpdate: (data) => fetch(withApi('/app/apply-update'), {
     method: 'POST',

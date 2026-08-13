@@ -478,9 +478,16 @@ function HistorySection() {
 
 // ─── Stocktake / Reconciliation section ──────────────────────────────────────
 
-function StocktakeSection({ stock }) {
+const StocktakeSection = React.forwardRef(function StocktakeSection({ stock, openExternal, onExternalOpened }, ref) {
   const { push } = useToast();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (openExternal) {
+      setOpen(true);
+      if (onExternalOpened) onExternalOpened();
+    }
+  }, [openExternal, onExternalOpened]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [counts, setCounts] = useState({});   // tool_id → draft input value
@@ -516,7 +523,7 @@ function StocktakeSection({ stock }) {
   const rows = (data || []).filter(r => !discrepancyOnly || r.has_discrepancy);
 
   return (
-    <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+    <div ref={ref} className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
       <button onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-5 py-4 hover:bg-neutral-50 transition">
         <div className="flex items-center gap-2.5">
@@ -634,7 +641,7 @@ function StocktakeSection({ stock }) {
       )}
     </div>
   );
-}
+});
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
@@ -646,6 +653,15 @@ export default function MyInventoryScreen() {
   const [toolsLoading, setToolsLoading] = useState(false);
   const [modal, setModal] = useState(null); // 'usage' | 'distribute' | 'count' | null
   const [stockSearch, setStockSearch] = useState('');
+  const [stocktakeOpen, setStocktakeOpen] = useState(false);
+  const stocktakeRef = useRef(null);
+
+  const goToStocktake = () => {
+    setStocktakeOpen(true);
+    setTimeout(() => {
+      stocktakeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+  };
 
   const loadStock = useCallback(async () => {
     setStockLoading(true);
@@ -711,9 +727,9 @@ export default function MyInventoryScreen() {
         {[
           { mode: 'usage',      label: 'Record Tools Utilization', sub: 'Enter the quantity used', Icon: TrendingDown,    bg: 'bg-rose-50',   border: 'border-rose-200',   icon: 'text-rose-600',   btn: 'bg-rose-600 hover:bg-rose-700' },
           { mode: 'distribute', label: 'Distribute to SDP/Unit/Dept', sub: 'Send to a department', Icon: ArrowRightLeft,  bg: 'bg-blue-50',   border: 'border-blue-200',   icon: 'text-blue-600',   btn: 'bg-blue-600 hover:bg-blue-700' },
-          { mode: 'count',      label: 'Physical Count',     sub: 'Count what is on the shelf', Icon: ClipboardList,   bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-600', btn: 'bg-violet-600 hover:bg-violet-700' },
+          { mode: 'count',      label: 'Physical Count',     sub: 'Go to Stocktake / Reconciliation', Icon: ClipboardList,   bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-600', btn: 'bg-violet-600 hover:bg-violet-700' },
         ].map(({ mode, label, sub, Icon, bg, border, icon, btn }) => (
-          <button key={mode} onClick={() => setModal(mode)}
+          <button key={mode} onClick={() => mode === 'count' ? goToStocktake() : setModal(mode)}
             className={`${bg} ${border} border rounded-2xl p-4 text-left hover:shadow-md hover:-translate-y-0.5 transition group flex flex-col gap-2`}>
             <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${btn.split(' ')[0]} group-hover:scale-105 transition`}>
               <Icon className="h-4 w-4 text-white" />
@@ -765,7 +781,7 @@ export default function MyInventoryScreen() {
       <HistorySection />
 
       {/* ── Collapsible: Stocktake ── */}
-      <StocktakeSection stock={stock} />
+      <StocktakeSection stock={stock} ref={stocktakeRef} openExternal={stocktakeOpen} onExternalOpened={() => setStocktakeOpen(false)} />
 
       {/* ── Modal ── */}
       {modal && (

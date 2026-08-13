@@ -4,6 +4,7 @@ import { useToast } from './toasts';
 import {
   Building2, Package, Loader2, RefreshCw, Search,
   ChevronLeft, ArrowRightLeft, TrendingDown, AlertTriangle,
+  Pencil, Check, X,
 } from 'lucide-react';
 
 // ─── Facility summary card (list view) ───────────────────────────────────────
@@ -33,12 +34,39 @@ function FacilityCard({ facility, totalStock, toolsWithStock, onClick }) {
 
 // ─── Tool stock card (detail view) ───────────────────────────────────────────
 
-function ToolStockCard({ item }) {
+function ToolStockCard({ item, facility, onSaved }) {
+  const { push } = useToast();
   const qty = item.quantity ?? 0;
   const received = item.qty_received ?? 0;
-  const used = received - qty; // derived so Used + Balance = Received always
+  const used = Math.max(0, received - qty); // derived so Used + Balance = Received always
   const isLow = qty > 0 && qty < 10;
   const isOut = qty <= 0 && received > 0;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = () => { setDraft(String(qty)); setEditing(true); };
+
+  const save = async () => {
+    const val = parseInt(draft, 10);
+    if (isNaN(val) || val < 0) return push('Enter a valid quantity', 'error');
+    setSaving(true);
+    try {
+      const res = await api.updateFacilityStock({
+        facility_stock_id: item.facility_stock_id,
+        tool_id: item.tool_id,
+        facility,
+        quantity: val,
+      });
+      push(res.message || 'Stock updated', 'success');
+      setEditing(false);
+      if (onSaved) onSaved();
+    } catch (e) {
+      push(e.message || 'Failed to update stock', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${
@@ -48,16 +76,40 @@ function ToolStockCard({ item }) {
     }`}>
       <div className="flex items-start justify-between gap-2">
         <span className="text-sm font-semibold text-neutral-900 leading-tight">{item.tool_name}</span>
-        {isLow && (
-          <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-700 uppercase tracking-wide">Low</span>
-        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {isLow && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-700 uppercase tracking-wide">Low</span>
+          )}
+          {!editing && (
+            <button onClick={startEdit} title="Edit stock" className="p-1 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-white/70 transition">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
-      <div className={`text-3xl font-extrabold ${isOut ? 'text-rose-600' : isLow ? 'text-amber-600' : qty > 0 ? 'text-emerald-600' : 'text-neutral-300'}`}>
-        {qty}
-      </div>
+      {editing ? (
+        <div className="flex items-center gap-2 mt-0.5">
+          <input
+            type="number" min="0" autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            className="w-full min-w-0 border border-neutral-300 rounded-lg px-2 py-1 text-lg font-extrabold text-neutral-900 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+          />
+          <button onClick={save} disabled={saving} className="h-8 w-8 rounded-lg bg-emerald-600 text-white grid place-items-center disabled:opacity-50 flex-shrink-0">
+            <Check className="h-4 w-4" />
+          </button>
+          <button onClick={() => setEditing(false)} className="h-8 w-8 rounded-lg border border-neutral-300 text-neutral-500 grid place-items-center flex-shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <div className={`text-3xl font-extrabold ${isOut ? 'text-rose-600' : isLow ? 'text-amber-600' : qty > 0 ? 'text-emerald-600' : 'text-neutral-300'}`}>
+          {qty}
+        </div>
+      )}
       <div className="text-[11px] text-neutral-400 space-y-0.5">
         <div>Received: <span className="font-semibold text-neutral-600">{received}</span></div>
-        <div>Used: <span className="font-semibold text-neutral-600">{used > 0 ? used : 0}</span></div>
+        <div>Used: <span className="font-semibold text-neutral-600">{used}</span></div>
       </div>
     </div>
   );
@@ -173,7 +225,7 @@ function FacilityDetail({ facilityName, onBack }) {
           </div>
         ) : (
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            {filtered.map(t => <ToolStockCard key={t.tool_id} item={t} />)}
+            {filtered.map(t => <ToolStockCard key={t.tool_id} item={t} facility={facilityName} onSaved={load} />)}
           </div>
         )}
       </div>
