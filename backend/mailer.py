@@ -23,6 +23,41 @@ ACTION_TOKEN_SECRET = os.getenv(
 ).encode("utf-8")
 
 
+def _send_via_brevo(to_emails, subject, html_body, text_body):
+    """Send email via the Brevo (Sendinblue) HTTP API. Returns True on success.
+
+    Works from any network (including Render) and needs no verified domain —
+    only a verified sender email.
+    """
+    payload = json.dumps({
+        "sender": {
+            "name": Config.BREVO_SENDER_NAME or "TIMS",
+            "email": Config.BREVO_SENDER_EMAIL,
+        },
+        "to": [{"email": e} for e in to_emails],
+        "subject": subject,
+        "htmlContent": html_body,
+        "textContent": text_body or "",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        method="POST",
+        headers={
+            "api-key": Config.BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "TIMS/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status == 201:
+            logger.info("Brevo OK: %s", resp.read().decode("utf-8", "ignore")[:120])
+            return True
+        logger.warning("Brevo returned status %s", resp.status)
+        return False
+
+
 def _send_via_resend(to_emails, subject, html_body, text_body):
     """Send email via the Resend HTTP API. Returns True on success.
 
@@ -44,6 +79,7 @@ def _send_via_resend(to_emails, subject, html_body, text_body):
         headers={
             "Authorization": f"Bearer {Config.RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "TIMS/1.0 (Resend mailer)",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -69,7 +105,19 @@ def send_email(to_emails, subject, html_body, text_body=None):
         text_body = re.sub(r'<[^>]+>', '', html_body)
         text_body = re.sub(r'\s+', ' ', text_body).strip()
 
-    # 1. Preferred: Resend HTTP API (reliable from .exe and Render alike)
+    # 1. Preferred: Brevo HTTP API (no domain needed, works from .exe and Render)
+    if Config.BREVO_API_KEY and Config.BREVO_SENDER_EMAIL:
+        try:
+            if _send_via_brevo(to_emails, subject, html_body, text_body):
+                return True
+            logger.warning("Brevo failed — trying next provider")
+        except urllib.error.HTTPError as e:
+            logger.warning("Brevo HTTP error %s: %s — trying next provider",
+                           e.code, e.read().decode("utf-8", "ignore")[:200])
+        except Exception as e:
+            logger.warning("Brevo exception %s — trying next provider", e)
+
+    # 2. Resend HTTP API (when configured)
     if Config.RESEND_API_KEY:
         try:
             if _send_via_resend(to_emails, subject, html_body, text_body):
@@ -81,7 +129,7 @@ def send_email(to_emails, subject, html_body, text_body=None):
         except Exception as e:
             logger.warning("Resend exception %s — falling back to SMTP", e)
 
-    # 2. Fallback: SMTP
+    # 3. Fallback: SMTP
     if not Config.SMTP_USER or not Config.SMTP_PASSWORD:
         logger.warning("SMTP not configured — skipping email")
         return False

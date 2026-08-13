@@ -34,5 +34,11 @@ services:
         sync: false
       - key: RESEND_FROM
         value: "TIMS <onboarding@resend.dev>"
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: "TIMS"
       - key: ADMIN_SIGNUP_KEY
         sync: false

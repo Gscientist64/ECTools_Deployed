@@ -76,6 +76,11 @@ class Config:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
     RESEND_FROM = os.getenv("RESEND_FROM", "TIMS <onboarding@resend.dev>")
 
+    # Brevo (Sendinblue) HTTP email API — no domain needed, just a verified sender email
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+    BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "")
+    BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "TIMS")
+
     if os.getenv("PRODUCTION", "0") == "1":
         SESSION_COOKIE_SAMESITE = "None"
         SESSION_COOKIE_SECURE = True
