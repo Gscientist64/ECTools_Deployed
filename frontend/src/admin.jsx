@@ -402,6 +402,7 @@ function RequestsTab({ onNeedRefresh }) {
   const [openId, setOpenId]   = useState(null);
   const [editing, setEditing] = useState(null);
   const [draft, setDraft]     = useState({});
+  const [draftApproved, setDraftApproved] = useState({});
   const [rejectId, setRejectId] = useState(null);
   const [search, setSearch]   = useState('');
   const [selected, setSelected] = useState(new Set());
@@ -423,6 +424,10 @@ function RequestsTab({ onNeedRefresh }) {
   const name   = r => r?.user?.name || r?.user?.username || r?.requested_by || r?.requester_name || r?.username || r?.email || '—';
   const fac    = r => r?.user?.facility || r?.facility || r?.facility_name || '—';
   const actor  = r => r?.approved_by?.name || r?.approved_by_name || r?.approvedBy || '';
+  // Show Resend mail when the latest supervisor email failed, OR when there is no
+  // log yet (e.g. requests created before email tracking) so the admin can force a
+  // send. Hidden once a send is confirmed successful.
+  const canResend = r => !r.supervisor_email || r.supervisor_email.status === 'failed';
 
   const filtered = rows.filter(r => {
     if (!search) return true;
@@ -435,6 +440,14 @@ function RequestsTab({ onNeedRefresh }) {
     catch (e) { push(e.message || 'Cannot approve — check stock and edit quantities first', 'error'); }
   };
 
+  const resendSupervisor = async (id) => {
+    try {
+      const res = await api.adminResendSupervisorEmail(id);
+      push(res?.message || 'Supervisor email sent', 'success');
+      await load();
+    } catch (e) { push(e.message || 'Failed to resend supervisor email', 'error'); }
+  };
+
   const del = async (id) => {
     if (!confirm('Delete this pending request?')) return;
     try { await api.adminDeleteRequest(id); push('Deleted', 'success'); await load(); }
@@ -444,18 +457,24 @@ function RequestsTab({ onNeedRefresh }) {
   const beginEdit = (r) => {
     setEditing(r.id);
     const d = {};
-    (r.lines || r.requested_tools || r.items || []).forEach(ln => { d[ln.id] = ln.quantity; });
+    const da = {};
+    (r.lines || r.requested_tools || r.items || []).forEach(ln => {
+      d[ln.id] = ln.quantity;
+      da[ln.id] = ln.approved_quantity ?? ln.quantity;
+    });
     setDraft(d);
+    setDraftApproved(da);
   };
-  const cancelEdit = () => { setEditing(null); setDraft({}); };
+  const cancelEdit = () => { setEditing(null); setDraft({}); setDraftApproved({}); };
   const saveEdit = async (r) => {
     try {
       const lines = (r.lines || r.requested_tools || r.items || []).map(ln => ({
         id: ln.id, quantity: Number(draft[ln.id] ?? ln.quantity),
+        approved_quantity: Number(draftApproved[ln.id] ?? ln.approved_quantity ?? ln.quantity),
       }));
       await api.adminEditRequest(r.id, lines);
       push('Request updated', 'success');
-      setEditing(null); setDraft({});
+      setEditing(null); setDraft({}); setDraftApproved({});
       await load();
     } catch (e) { push(e.message || 'Failed to update', 'error'); }
   };
@@ -648,6 +667,16 @@ function RequestsTab({ onNeedRefresh }) {
                         <AlertTriangle className="h-3.5 w-3.5" />exceeds stock
                       </span>
                     )}
+                    {r.supervisor_email && (
+                      <span
+                        className={`inline-flex items-center gap-1 ml-2 font-medium ${r.supervisor_email.status === 'failed' ? 'text-rose-600' : 'text-emerald-600'}`}
+                        title={`Supervisor email (${r.supervisor_email.email}): ${r.supervisor_email.status === 'failed' ? 'failed — ' + (r.supervisor_email.error || 'see log') : 'delivered'}`}
+                      >
+                        {r.supervisor_email.status === 'failed'
+                          ? <><AlertCircle className="h-3.5 w-3.5" />email failed</>
+                          : <><Send className="h-3.5 w-3.5" />email sent</>}
+                      </span>
+                    )}
                     {r.status === 'Approved' && r.date_approved && (
                       <span className="ml-2">· Approved {daysSince(r.date_approved)}{actor(r) ? ` by ${actor(r)}` : ''}</span>
                     )}
@@ -680,6 +709,14 @@ function RequestsTab({ onNeedRefresh }) {
                         </Btn>
                       </>
                     ) : null}
+                    {canResend(r) && !isEditing && (
+                      <Btn variant="ghost" color="blue" onClick={() => resendSupervisor(r.id)}
+                        title={r.supervisor_email
+                          ? 'The supervisor email failed to send — click to resend it.'
+                          : 'No supervisor email is recorded for this request — click to send it now.'}>
+                        <Send className="h-3.5 w-3.5" />Resend mail
+                      </Btn>
+                    )}
                   </div>
                 </div>
 
@@ -723,22 +760,49 @@ function RequestsTab({ onNeedRefresh }) {
                               </div>
 
                               <div className="flex items-center justify-between gap-2">
-                                <div className="text-xs text-neutral-500">
-                                  Req: <span className="font-semibold text-neutral-700">{ln.quantity}</span>
-                                  {' '}· Stock:{' '}
-                                  <span className={`font-semibold ${over ? 'text-rose-600' : 'text-emerald-600'}`}>{ln.in_stock ?? 0}</span>
-                                </div>
                                 {isEditing ? (
-                                  <input
-                                    type="number" min="1"
-                                    value={String(draft[ln.id] ?? ln.quantity)}
-                                    onChange={e => setDraft(p => ({ ...p, [ln.id]: e.target.value.replace(/[^\d]/g, '') }))}
-                                    className="w-20 rounded-lg border border-neutral-300 text-sm text-right px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-200"
-                                  />
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <label className="flex items-center gap-1 text-[11px] text-neutral-500">
+                                      Req:
+                                      <input
+                                        type="number" min="1"
+                                        value={String(draft[ln.id] ?? ln.quantity)}
+                                        onChange={e => setDraft(p => ({ ...p, [ln.id]: e.target.value.replace(/[^\d]/g, '') }))}
+                                        className="w-16 rounded-lg border border-neutral-300 text-sm text-right px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-200"
+                                      />
+                                    </label>
+                                    <label className="flex items-center gap-1 text-[11px] text-neutral-500">
+                                      Appr:
+                                      <input
+                                        type="number" min="0"
+                                        value={String(draftApproved[ln.id] ?? ln.approved_quantity ?? ln.quantity)}
+                                        onChange={e => setDraftApproved(p => ({ ...p, [ln.id]: e.target.value.replace(/[^\d]/g, '') }))}
+                                        className="w-16 rounded-lg border border-amber-300 text-sm text-right px-2 py-1 outline-none focus:ring-2 focus:ring-amber-200"
+                                        title="Approved quantity"
+                                      />
+                                    </label>
+                                  </div>
                                 ) : (
-                                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${over ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                    {over ? 'Exceeds stock' : 'OK'}
-                                  </span>
+                                  <div className="text-xs text-neutral-500">
+                                    Req: <span className="font-semibold text-neutral-700">{ln.quantity}</span>
+                                    {ln.approved_quantity != null && (
+                                      <>
+                                        {' '}· Approved:{' '}
+                                        <span className={`font-semibold ${ln.approved_quantity < ln.quantity ? 'text-amber-600' : 'text-indigo-600'}`}>{ln.approved_quantity}</span>
+                                      </>
+                                    )}
+                                    {' '}· Stock:{' '}
+                                    <span className={`font-semibold ${over ? 'text-rose-600' : 'text-emerald-600'}`}>{ln.in_stock ?? 0}</span>
+                                  </div>
+                                )}
+                                {!isEditing && (
+                                  ln.approved_quantity != null && ln.approved_quantity < ln.quantity ? (
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Partial</span>
+                                  ) : (
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${over ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                      {over ? 'Exceeds stock' : 'OK'}
+                                    </span>
+                                  )
                                 )}
                               </div>
                             </li>

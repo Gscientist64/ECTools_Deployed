@@ -261,6 +261,7 @@ export default function RequestScreen() {
   const [openReqId, setOpenReqId] = useState(null);
   const [dialog, setDialog] = useState({ open: false, requestId: null, lines: [] });
   const [stockWarnings, setStockWarnings] = useState({}); // { [tool_id]: { message, current_stock } }
+  const [utilWarnings, setUtilWarnings] = useState({});   // { [tool_id]: utilization_warning }
 
   useEffect(() => { loadAll(); }, []);
 
@@ -302,26 +303,36 @@ export default function RequestScreen() {
 
   const setToolQty = (id, val) => {
     setQty(q => ({ ...q, [id]: val }));
-    // Real-time stock check — block tools already in sufficient stock, warn otherwise
+    // Real-time stock check — block tools that are state out-of-stock or already in sufficient stock,
+    // and warn when the requested qty exceeds state stock. Both show a ~5s inline bubble.
     const numVal = parseInt(val, 10);
     if (numVal > 0) {
       api.checkStockBeforeRequest(id, numVal).then(res => {
         if (res && res.block) {
-          // Facility already has enough stock — do NOT add to cart, notify only
+          // Not available (state out of stock or facility already has enough) — do NOT add to cart
           setQty(q => ({ ...q, [id]: 0 }));
-          setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; });
-          push(res.message || `You already have ${res.current_stock} in stock`, 'error');
+          setStockWarnings(w => ({ ...w, [id]: { message: res.message || 'This tool is not available.', current_stock: res.current_stock } }));
+          // Auto-dismiss after 5 seconds
+          setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 5000);
         } else {
           if (res && res.warn) {
             setStockWarnings(w => ({ ...w, [id]: { message: res.message || `You still have ${res.current_stock} in stock`, current_stock: res.current_stock } }));
-            // Auto-dismiss after 7 seconds
-            setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 7000);
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 5000);
           }
+        }
+        // Utilization warning: facility under-used this tool previously -> may be rejected
+        if (res && res.utilization_warning) {
+          setUtilWarnings(w => ({ ...w, [id]: res.utilization_warning }));
+          setTimeout(() => setUtilWarnings(w => { const n = { ...w }; delete n[id]; return n; }), 5000);
+        } else {
+          setUtilWarnings(w => { const n = { ...w }; delete n[id]; return n; });
         }
       }).catch(() => {});
     } else {
       // Clear warning if qty is cleared
       setStockWarnings(w => { const n = { ...w }; delete n[id]; return n; });
+      setUtilWarnings(w => { const n = { ...w }; delete n[id]; return n; });
     }
   };
 
@@ -532,6 +543,22 @@ export default function RequestScreen() {
                                         </span>
                                         {/* speech-bubble tail */}
                                         <div className="absolute -left-1.5 top-0 w-3 h-3 rotate-45" style={{ background: '#FF7F7F' }} />
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* Utilization warning (under-utilized previously given tool) */}
+                                  {utilWarnings[t.id] && (
+                                    <div className="mt-2 relative">
+                                      <div
+                                        className="text-[11px] px-2.5 py-1.5 rounded-2xl rounded-tl-sm text-amber-900 font-medium animate-in fade-in slide-in-from-left-2"
+                                        style={{ background: '#FDE68A' }}
+                                      >
+                                        <span className="flex items-center gap-1.5">
+                                          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                                          {utilWarnings[t.id].message}
+                                        </span>
+                                        {/* speech-bubble tail */}
+                                        <div className="absolute -left-1.5 top-0 w-3 h-3 rotate-45" style={{ background: '#FDE68A' }} />
                                       </div>
                                     </div>
                                   )}

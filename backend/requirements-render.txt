@@ -25,3 +25,5 @@ gunicorn
 pandas
 xlsxwriter
 reportlab
+python-calamine
+openpyxl

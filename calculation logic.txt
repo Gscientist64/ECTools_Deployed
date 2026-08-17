@@ -1,0 +1,185 @@
+TOOLS UTILIZATION - CALCULATION LOGIC
+======================================
+
+OVERALL CONCEPT
+---------------
+For each facility and each mapped tool, we compare:
+
+    GIVEN   = the amount of that tool the facility was last given
+              (from ADMIN-APPROVED requests, converted to sheets/cards)
+    USED    = the facility's activity counted from the uploaded program report
+              (rows dated from the day they were last given the tool)
+
+    UTILIZATION % = USED / GIVEN * 100
+
+A facility is considered UNDER-UTILIZED when utilization is below 70%
+(i.e. they have used less than 70% of what they were given).
+
+"GIVEN" SOURCE = ADMIN-APPROVED REQUESTS (not delivery records)
+---------------------------------------------------------------
+"Given" is taken from the REQUEST that was APPROVED BY ADMIN (request status
+'Approved' or 'Delivered'), NOT from the delivery/confirmation records.
+A request becomes 'Approved' the moment admin approves it, and 'Delivered'
+once the facility confirms receipt. Counting the approved request means a
+facility that was approved a tool still counts as having been given it even
+if they forgot to confirm the delivery.
+
+    given quantity = approved_quantity  (S.I. override, if set)
+                     otherwise the requested quantity
+    given date     = request.date_approved (fallback: date_requested)
+
+PACK SIZE (how "given" is counted)
+----------------------------------
+A delivery is stored as a quantity with a unit. For conversion to the same
+unit as the report counts:
+
+    FORM-type tools  -> 1 unit = 1 booklet = 100 sheets  (given = qty * 100)
+    CARD-type tools  -> 1 unit = 1 card                   (given = qty * 1)
+
+DISPLAY (booklets + sheets)
+---------------------------
+Every stat card shows BOTH units so users understand the numbers:
+
+    FORM tools  -> "68 booklets (6,800 sheets)"   (given)
+                   "322.7 booklets (32,268 sheets)" (used)
+    CARD tools  -> "662 cards"
+
+   "given"  = booklets approved (approved request qty) + sheet equivalent.
+   "used"   = sheets counted from the report             + booklet equivalent.
+
+--------------------------------------------------------------------------------
+
+THE 6 TOOLS, THEIR REPORT, COLUMN AND FILTER CRITERIA
+======================================================
+
+For EVERY tool below, the per-facility filter is the same two steps:
+  1) Match the facility by name (see "Facility Matching" at the end).
+  2) Count report rows whose date column is ON OR AFTER the date the facility
+     was last given that tool (i.e. the last delivery date of that tool).
+
+--------------------------------------------------------------------------------
+1) COMBINED PHARMACY ORDER FORM
+   Report ............ RADET_20260813.xlsx
+   Facility column ... "Facility Name"
+   Date column ....... "Last Pickup Date (yyyy-mm-dd)"
+   What it counts .... Number of pharmacy refills (drug pickups) a facility
+                       did since they were last given this tool.
+   Given ............ deliveries of this tool * 100  (it is a Form)
+
+--------------------------------------------------------------------------------
+2) CARE/ART CARD
+   Report ............ RADET_20260813.xlsx
+   Facility column ... "Facility Name"
+   Date column ....... "Date of Registration"
+   What it counts .... Number of NEW client registrations a facility did since
+                       they were last given this tool.
+   Given ............ deliveries of this tool * 1  (it is a Card)
+
+--------------------------------------------------------------------------------
+3) NATIONAL HTS FORM
+   Report ............ HTS_PEPFAR_20260814.xlsx
+   Facility column ... "Facility"
+   Date column ....... "Date Of Current HIV Testing (yyyy-mm-dd)"
+   What it counts .... Number of HIV TESTS performed since the facility was
+                       last given this tool.
+   Given ............ deliveries of this tool * 100  (it is a Form)
+
+--------------------------------------------------------------------------------
+4) PrEP/PEP CARD
+   Report ............ PREP_CROSS_SECTIONAL_20260814.xlsx
+   Facility column ... "Facility Name"
+   Date column ....... "Date Of Registration (yyyy-mm-dd)"
+   What it counts .... Number of PrEP clients registered since the facility was
+                       last given this tool.
+   Given ............ deliveries of this tool * 1  (it is a Card)
+
+--------------------------------------------------------------------------------
+5) PrEP/PEP SCREENING AND ELIGIBILITY FORM
+   Report ............ PREP_CROSS_SECTIONAL_20260814.xlsx
+   Facility column ... "Facility Name"
+   Date column ....... "Date Of Last Pickup (yyyy-mm-dd)"
+   What it counts .... Number of PrEP drug pickups since the facility was last
+                       given this tool.
+   Given ............ deliveries of this tool * 100  (it is a Form)
+
+--------------------------------------------------------------------------------
+6) FACILITY CARE AND SUPPORT SCREENING CHECKLIST
+   Report ............ RADET_20260813.xlsx
+   Facility column ... "Facility Name"
+   Date column ....... "Last Pickup Date (yyyy-mm-dd)"
+   What it counts .... Number of pharmacy refills since the facility was last
+                       given this tool (same as tool #1).
+   Given ............ deliveries of this tool * 100  (it is a Form)
+
+--------------------------------------------------------------------------------
+
+"LAST GIVEN" (the period start date)
+------------------------------------
+For each facility + tool:
+   - We look at ALL APPROVED requests (status 'Approved' or 'Delivered')
+     of that tool to that facility.
+   - The MOST RECENT approval (by date_approved, falling back to
+     date_requested) sets:
+        start date = that approval's date
+        given      = that approval's quantity * pack size
+   - USED = report rows for that facility with date >= start date
+            up to the report's latest date.
+   (If a facility has been approved the tool more than once, only the LAST
+   approval is used for both the start date and the "given" amount.)
+
+REPORT "USED" COUNTS (what columns feed the numbers)
+----------------------------------------------------
+   RADET: each row = one ART client. The count is the number of rows where
+          the facility matches AND the date column >= start date.
+   HTS:   each row = one HIV test event. Count of rows matching facility
+          and date >= start date.
+   PREP:  each row = one PrEP client/visit. Count of rows matching facility
+          and date >= start date.
+
+   NOTE: for HTS, ALL tests are counted (Positive and Negative results),
+         because a test consumes a form regardless of outcome.
+
+FACILITY MATCHING
+-----------------
+   Report facility names are matched to the system's facility names
+   (from user accounts / deliveries) as follows:
+     1) exact match, case-insensitive, ignoring extra spaces
+     2) otherwise substring match (one name contained in the other)
+   This handles names like "Akpet Central" (system) vs
+   "Akpet Central Cottage Hospital" (report).
+
+--------------------------------------------------------------------------------
+
+ADMIN "STATE" TAB (period-filtered aggregate)
+---------------------------------------------
+When an admin picks a From/To period, for EACH of the 6 tools:
+   GIVEN (state)   = sum of ADMIN-APPROVED quantities of that tool whose
+                     approval date falls inside [From, To], converted by pack.
+   USED (state)    = sum of report counts for that tool whose date falls
+                     inside [From, To], across ALL facilities in the report
+                     (NOT just facilities that have an approved request).
+   UTILIZATION %   = USED / GIVEN * 100
+   Facilities      = number of facilities that received that tool in the period.
+
+   IMPORTANT: USED counts every facility in the uploaded report (the true
+   state-wide activity, e.g. 32,268 pharmacy refills from 2026-04-01), while
+   GIVEN only counts what was actually approved in the period. Because of
+   this, utilization is often far above 100% (facilities used more than was
+   given in the period, e.g. using stock given earlier). That is expected
+   and simply means they are NOT under-utilized.
+
+ADMIN "FACILITIES" TAB (per-facility drill-down)
+------------------------------------------------
+   Shows the per-facility, per-tool GIVEN / USED / UTILIZATION % / STATUS
+   exactly as described in the per-facility calculation above
+   (last approval start date, pack-adjusted given). Only facilities that
+   have an approved request of the tool appear here (a facility with no
+   approval has no "given" to compare against).
+
+--------------------------------------------------------------------------------
+
+REPORTS USED (in the /utilization folder)
+-----------------------------------------
+   RADET_20260813.xlsx                 (93,532 data rows, 64 facilities)
+   HTS_PEPFAR_20260814.xlsx            (147,292 data rows, 64 facilities)
+   PREP_CROSS_SECTIONAL_20260814.xlsx  (6,056 data rows, 64 facilities)

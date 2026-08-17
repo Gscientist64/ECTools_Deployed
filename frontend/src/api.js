@@ -200,6 +200,14 @@ export const api = {
     return asJson(r);
   },
 
+  async adminResendSupervisorEmail(id) {
+    const r = await fetch(withApi(`/admin/requests/${id}/resend-supervisor`), {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return asJson(r);
+  },
+
   async adminRejectRequest(id) {
     const r = await fetch(withApi(`/admin/requests/${id}/reject`), {
       method: 'POST',
@@ -252,6 +260,43 @@ export const api = {
     const r = await fetch(withApi("/admin/utilization/calculate"), {
       method: "POST", body: fd, credentials: "include",
     });
+    return asJson(r);
+  },
+
+  // Given-vs-achieved utilization (new): upload reports -> compute + persist
+  async uploadUtilization({ radetFile, htsFile, prepFile }) {
+    const fd = new FormData();
+    if (radetFile) fd.append("radet_file", radetFile);
+    if (htsFile)   fd.append("hts_file",   htsFile);
+    if (prepFile)  fd.append("prep_file",  prepFile);
+    const r = await fetch(withApi("/admin/utilization/upload"), {
+      method: "POST", body: fd, credentials: "include",
+    });
+    return asJson(r);
+  },
+
+  // Stored utilization visible to the current user (facility/supervisor/S.I./admin)
+  async myUtilization() {
+    const r = await fetch(withApi("/utilization"), { credentials: "include" });
+    return asJson(r);
+  },
+
+  // State-level aggregate per tool for a selected period (admin)
+  async utilizationState({ from, to }) {
+    const qs = new URLSearchParams();
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    const r = await fetch(withApi(`/utilization/state?${qs}`), { credentials: "include" });
+    return asJson(r);
+  },
+
+  // Per-facility breakdown for one tool in a period (admin State tab drill-down)
+  async utilizationStateFacilities({ tool_id, from, to }) {
+    const qs = new URLSearchParams();
+    if (tool_id) qs.set("tool_id", tool_id);
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    const r = await fetch(withApi(`/utilization/state/facilities?${qs}`), { credentials: "include" });
     return asJson(r);
   },
 
@@ -534,7 +579,7 @@ export const api = {
     return asJson(r);
   },
 
-  async myUtilization() {
+  async inventoryUtilization() {
     const r = await fetch(withApi('/inventory/my-utilization'), { credentials: 'include' });
     return asJson(r);
   },
@@ -751,6 +796,8 @@ export const api = {
   }).then(r => r.json()),
 
   updateProgress: () => fetch(withApi('/app/update-progress'), { credentials: 'include' }).then(r => r.json()),
+
+  appUpdateStatus: () => fetch(withApi('/app/update-status'), { credentials: 'include' }).then(r => r.json()),
 
   listSupervisors: () => fetch(withApi('/admin/supervisors'), { credentials: 'include' }).then(r => r.json()),
 

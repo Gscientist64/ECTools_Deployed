@@ -169,9 +169,13 @@ def send_email(to_emails, subject, html_body, text_body=None):
     return False
 
 
-def _make_action_token(request_id, reviewer_email, role, action):
-    """Create a time-limited HMAC-signed token for approve/reject actions."""
-    expiry = int(time.time()) + (7 * 24 * 3600)  # 7 days
+def _make_action_token(request_id, reviewer_email, role, action, expiry=None):
+    """Create a time-limited HMAC-signed token for approve/reject actions.
+    `expiry` is a unix timestamp; defaults to 7 days from now. Passing the same
+    expiry as an existing token reproduces the exact same token (used to recreate
+    the sibling approve/reject link from one link)."""
+    if expiry is None:
+        expiry = int(time.time()) + (7 * 24 * 3600)  # 7 days
     payload = f"{request_id}|{reviewer_email}|{role}|{action}|{expiry}"
     signature = hmac.new(ACTION_TOKEN_SECRET, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     token = f"{payload}|{signature}"
@@ -219,11 +223,18 @@ def _get_server_url():
     return url.rstrip("/")
 
 
-def _available_stock(facility_name, tool_id):
-    """Return available facility stock for a tool, or None if unknown."""
-    if not facility_name or not tool_id:
+def _available_stock(facility_name, tool_id, source="facility"):
+    """Return available stock for a tool.
+    source='facility' -> that facility's stock; source='state' -> central/state stock (Tool.quantity)."""
+    if not tool_id:
         return None
     try:
+        if source == "state":
+            from models import Tool
+            t = Tool.query.get(int(tool_id))
+            return t.quantity if t is not None else None
+        if not facility_name:
+            return None
         from models import FacilityStock
         fs = FacilityStock.query.filter_by(facility=facility_name, tool_id=int(tool_id)).first()
         return fs.quantity if fs is not None else None
@@ -231,8 +242,10 @@ def _available_stock(facility_name, tool_id):
         return None
 
 
-def _render_tools_table(tools_list, facility_name=None, show_stock=True):
-    """Render a modern table of requested tools with optional Available Stock column."""
+def _render_tools_table(tools_list, facility_name=None, show_stock=True, stock_source="facility"):
+    """Render a modern table of requested tools with an Available Stock column.
+    stock_source='facility' shows the facility's stock; 'state' shows central state stock.
+    If a tool dict carries a 'utilization' dict, a utilization line is shown under its name."""
     stock_col = '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Available</th>' if show_stock else ""
     rows = []
     for t in tools_list:
@@ -240,12 +253,35 @@ def _render_tools_table(tools_list, facility_name=None, show_stock=True):
         qty = t.get("quantity", 0)
         stock = "&mdash;"
         if show_stock:
-            st = _available_stock(facility_name, t.get("tool_id"))
+            st = _available_stock(facility_name, t.get("tool_id"), source=stock_source)
             stock = (str(st) if st is not None else "&mdash;")
         stock_td = f'<td style="padding:12px 16px;text-align:center;color:#64748b;font-size:14px;">{stock}</td>' if show_stock else ""
+
+        name_cell = name
+        util = t.get("utilization")
+        if util:
+            pct = util.get("utilization_pct")
+            given = util.get("given")
+            achieved = util.get("achieved")
+            under = bool(util.get("under_utilized"))
+            color = "#b45309" if under else "#047857"
+            if util.get("kind") == "form":
+                g_text = f"{util.get('given_units', given / 100)} booklets ({given} sheets)"
+                a_text = f"{util.get('achieved_units', achieved / 100)} booklets ({achieved} sheets)"
+            else:
+                g_text = f"{given} cards"
+                a_text = f"{achieved} cards"
+            note = f"Utilization: {pct}% (used {a_text} of {g_text})"
+            if under:
+                note += " &mdash; under-utilized"
+            name_cell += (
+                f'<div style="font-size:11px;color:{color};margin-top:4px;font-weight:600;line-height:1.4;">'
+                f"{note}</div>"
+            )
+
         rows.append(
             f"<tr style=\"border-bottom:1px solid #f1f5f9;\">"
-            f'<td style="padding:12px 16px;color:#334155;font-size:14px;">{name}</td>'
+            f'<td style="padding:12px 16px;color:#334155;font-size:14px;">{name_cell}</td>'
             f'<td style="padding:12px 16px;text-align:center;color:#334155;font-size:14px;font-weight:600;">{qty}</td>'
             f"{stock_td}"
             "</tr>"
@@ -409,7 +445,11 @@ def notify_si_management_of_request(request_id, facility_name, requester_name, t
                 has been <span style="color:#059669;font-weight:600;">approved</span> by the facility supervisor
                 ({_esc(supervisor_name)}). Please review for final sign-off.
             </p>
-            {_render_tools_table(tools_list, facility_name, show_stock=True)}
+            <p style="margin:0 0 16px;color:#64748b;font-size:13px;line-height:1.6;">
+                On the review page you can adjust the <strong>approved quantity</strong> for each item
+                before approving.
+            </p>
+            {_render_tools_table(tools_list, facility_name, show_stock=True, stock_source="state")}
         """
 
         html = _base_email_template(

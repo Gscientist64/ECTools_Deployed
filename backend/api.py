@@ -1,14 +1,15 @@
 from flask import Blueprint, jsonify, request, current_app, send_file
 from flask_login import login_user, logout_user, current_user, login_required
 from extensions import db
-from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine, FacilityTransfer, NotificationRead, AuditLog, RequestComment, DeliveryConcern, SupervisorAction, SystemSetting
+from models import Users, Tool, ToolCategory, Request as RequestModel, RequestedTool, ToolUsage, Delivery, FacilityStock, DepartmentDistribution, PhysicalStockCount, StockReceipt, StockReceiptLine, FacilityTransfer, NotificationRead, AuditLog, RequestComment, DeliveryConcern, SupervisorAction, SystemSetting, EmailLog, UtilizationResult, UTILIZATION_THRESHOLD
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func, and_, case, distinct, or_, not_
 from werkzeug.utils import secure_filename
 import pandas as pd
+import numpy as np
 from io import BytesIO
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from calendar import monthrange
 from io import BytesIO
 from pathlib import Path
@@ -2304,9 +2305,22 @@ def create_request():
                             tools_list=tools_snapshot,
                             supervisor_email=email,
                         )
-                    if not ok:
+                    if ok:
+                        with flask_app.app_context():
+                            db.session.add(EmailLog(request_id=req_id, email=email, role="facility_supervisor", status="sent"))
+                            db.session.commit()
+                    else:
+                        with flask_app.app_context():
+                            db.session.add(EmailLog(request_id=req_id, email=email, role="facility_supervisor", status="failed", error="send_email returned False"))
+                            db.session.commit()
                         flask_app.logger.warning(f"Email to {email} failed to send (request #{req_id})")
-                except Exception:
+                except Exception as e:
+                    try:
+                        with flask_app.app_context():
+                            db.session.add(EmailLog(request_id=req_id, email=email, role="facility_supervisor", status="failed", error=str(e)))
+                            db.session.commit()
+                    except Exception:
+                        pass
                     flask_app.logger.exception(f"Failed to notify supervisor {email}")
 
         threading.Thread(target=_send_emails, daemon=True).start()
@@ -2389,6 +2403,15 @@ def admin_list_requests():
         for sa in SupervisorAction.query.filter(SupervisorAction.request_id.in_(all_req_ids)).order_by(SupervisorAction.created_at.desc()).all():
             supervisor_actions_map.setdefault(sa.request_id, []).append(sa)
 
+    # Batch: latest supervisor email log per request (for resend tracking)
+    email_status_map = {}
+    if all_req_ids:
+        for el in EmailLog.query.filter(
+            EmailLog.request_id.in_(all_req_ids),
+            EmailLog.role == "facility_supervisor",
+        ).order_by(EmailLog.created_at.desc()).all():
+            email_status_map.setdefault(el.request_id, el)
+
     # Lightweight batch: facility stocks (only for facilities in these requests)
     facilities_in_reqs = set()
     for r in reqs:
@@ -2470,6 +2493,7 @@ def admin_list_requests():
                 "name": tool_name,
                 "quantity": qty,
                 "qty": qty,
+                "approved_quantity": ln.approved_quantity,
                 "status": ln.status,
                 "in_stock": int(getattr(tool_obj, "quantity", 0) or 0) if tool_obj else 0,
                 "stock": int(getattr(tool_obj, "quantity", 0) or 0) if tool_obj else 0,
@@ -2508,6 +2532,7 @@ def admin_list_requests():
             "status": r.status,
             "supervisor_status": supervisor_status,
             "si_status": si_status,
+            "supervisor_email": email_status_map.get(r.id).to_dict() if email_status_map.get(r.id) else None,
             "date_requested": _iso(getattr(r, "date_requested", None)),
             "date": _iso(getattr(r, "date_requested", None)),
             "requested_by": display_name,
@@ -2532,6 +2557,79 @@ def admin_list_requests():
         out.append(payload)
 
     return jsonify(out), 200
+
+
+@api_bp.route("/admin/requests/<int:req_id>/resend-supervisor", methods=["POST"])
+@login_required
+def admin_resend_supervisor_email(req_id):
+    """Re-sends the supervisor approval notification for a request and logs the result."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    r = (
+        RequestModel.query.options(
+            joinedload(RequestModel.user),
+            joinedload(RequestModel.requested_tools).joinedload(RequestedTool.tool),
+        )
+        .filter(RequestModel.id == req_id)
+        .first()
+    )
+    if not r:
+        return jsonify({"error": "Request not found"}), 404
+
+    from mailer import get_supervisors_for_facility, notify_facility_supervisor_of_request
+
+    facility_name = (r.user.facility if r.user else "") or "Unknown Facility"
+    requester_name = (r.user.first_name if r.user and r.user.first_name else (r.user.username if r.user else "Unknown"))
+
+    tools_list = []
+    for rt in (r.requested_tools or []):
+        t = rt.tool
+        tools_list.append({
+            "tool_id": rt.tool_id,
+            "name": t.name if t else "Unknown Tool",
+            "quantity": rt.quantity,
+        })
+
+    supervisors = get_supervisors_for_facility(facility_name)
+    if not supervisors:
+        return jsonify({"error": f"No supervisor email found for facility '{facility_name}'."}), 404
+
+    results = []
+    for email in supervisors:
+        try:
+            ok = notify_facility_supervisor_of_request(
+                request_id=r.id,
+                facility_name=facility_name,
+                requester_name=requester_name,
+                tools_list=tools_list,
+                supervisor_email=email,
+            )
+            db.session.add(EmailLog(
+                request_id=r.id,
+                email=email,
+                role="facility_supervisor",
+                status="sent" if ok else "failed",
+                error=None if ok else "send_email returned False",
+            ))
+            db.session.commit()
+            results.append({"email": email, "status": "sent" if ok else "failed"})
+        except Exception as e:
+            db.session.add(EmailLog(
+                request_id=r.id,
+                email=email,
+                role="facility_supervisor",
+                status="failed",
+                error=str(e),
+            ))
+            db.session.commit()
+            results.append({"email": email, "status": "failed", "error": str(e)})
+
+    all_ok = all(x["status"] == "sent" for x in results)
+    return jsonify({
+        "message": "Supervisor email(s) sent successfully." if all_ok else "Some supervisor email(s) failed to send.",
+        "results": results,
+    }), 200 if all_ok else 207
 
 
 @api_bp.route("/admin/requests/<int:req_id>/approve", methods=["POST"])
@@ -2717,6 +2815,8 @@ def admin_edit_request(req_id):
         ln = line_map[lid]
         if "quantity" in patch:
             ln.quantity = _safe_int(patch.get("quantity"), ln.quantity or 0)
+        if "approved_quantity" in patch:
+            ln.approved_quantity = _safe_int(patch.get("approved_quantity"), ln.approved_quantity)
         if "status" in patch:
             ln.status = patch.get("status")
 
@@ -4629,6 +4729,655 @@ def download_monthly_consumption():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ---------------------------------------------------------------------------
+# Tools Utilization (given vs achieved -> eligibility)
+# ---------------------------------------------------------------------------
+
+# Mapping of which tool is calculated from which report column, and its pack kind.
+#   kind 'form'  -> 1 unit = 1 booklet of 100 sheets
+#   kind 'card'  -> 1 unit = 1 card
+UTILIZATION_TOOLS = [
+    {"name": "Combined Pharmacy Order Form",           "report": "RADET", "date_col": "Last Pickup Date (yyyy-mm-dd)",                 "kind": "form"},
+    {"name": "Care/ART Card",                           "report": "RADET", "date_col": "Date of Registration",                          "kind": "card"},
+    {"name": "National HTS form",                       "report": "HTS",   "date_col": "Date Of Current HIV Testing (yyyy-mm-dd)",   "kind": "form"},
+    {"name": "PrEP/PEP card",                           "report": "PREP",  "date_col": "Date Of Registration (yyyy-mm-dd)",             "kind": "card"},
+    {"name": "PrEP/PEP screening and eligibility form", "report": "PREP",  "date_col": "Date Of Last Pickup (yyyy-mm-dd)",              "kind": "form"},
+    {"name": "Facility Care and Support Screening Checklist", "report": "RADET", "date_col": "Last Pickup Date (yyyy-mm-dd)",        "kind": "form"},
+]
+UTILIZATION_PACK = {"form": 100, "card": 1}
+# Pseudo-facility name storing the state-wide aggregate daily histogram (all
+# facilities in the report) so the admin State tab reflects the TRUE state count.
+UTILIZATION_STATE_FACILITY = "__STATE__"
+
+
+def _utilization_units_for(tool_name, given, achieved):
+    """Return {kind, pack, given_units, achieved_units} for a mapped tool.
+    FORM tools: 1 unit = 1 booklet = 100 sheets. CARD tools: 1 unit = 1 card."""
+    kind = "form"
+    for m in UTILIZATION_TOOLS:
+        if (m.get("name") or "").lower() == (tool_name or "").lower():
+            kind = m["kind"]
+            break
+    pack = UTILIZATION_PACK.get(kind, 1)
+
+    def _u(v):
+        if not pack:
+            return v
+        r = v / pack
+        return int(r) if abs(r - round(r)) < 1e-9 else round(r, 1)
+
+    return {
+        "kind": kind,
+        "pack": pack,
+        "given_units": _u(given),
+        "achieved_units": _u(achieved),
+    }
+
+REPORT_FACILITY_COLS = {
+    "RADET": ["Facility Name", "Facility_Name", "FACILITY NAME"],
+    "HTS":   ["Facility", "facility", "Facility Name", "FACILITY"],
+    "PREP":  ["Facility Name", "Facility_Name", "Facility"],
+}
+
+
+def _utilization_norm(name):
+    import re as _re
+    if name is None:
+        return ""
+    return _re.sub(r"\s+", " ", str(name).strip().lower())
+
+
+def _utilization_find_col(df, candidates):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _utilization_approval_map():
+    """One query: (facility, tool_id) -> (approval_datetime, given_qty) based on
+    REQUESTS APPROVED BY ADMIN (status 'Approved' or 'Delivered').
+
+    'Given' is sourced from the approved request rather than the delivery record
+    so a facility that was approved a tool counts as having been given it even if
+    they never confirmed the delivery. given_qty = approved_quantity if set (S.I.
+    override) else the requested quantity."""
+    rows = (db.session.query(
+                RequestedTool.tool_id, Users.facility,
+                RequestModel.date_approved, RequestModel.date_requested,
+                RequestedTool.approved_quantity, RequestedTool.quantity,
+            )
+            .join(RequestModel, RequestedTool.request_id == RequestModel.id)
+            .join(Users, RequestModel.user_id == Users.id)
+            .filter(RequestModel.status.in_(["Approved", "Delivered"]))
+            .all())
+    amap = {}
+    for tool_id, fac, appr, reqd, aq, qty in rows:
+        if not fac:
+            continue
+        key = (fac.strip(), tool_id)
+        dt = appr or reqd
+        cur = amap.get(key)
+        if cur is None or (dt is not None and (cur[0] is None or dt > cur[0])):
+            amap[key] = (dt, (aq if aq is not None else (qty or 0)))
+    return amap
+
+
+def _utilization_approvals_in_period(tool_id, from_date, to_date):
+    """Return {facility: total_approved_qty} for one tool within [from, to].
+    Sums EVERY admin-approved request in the period (not just the most recent per
+    facility) so the State total and the per-facility breakdown agree."""
+    rows = (db.session.query(
+                Users.facility,
+                func.coalesce(RequestedTool.approved_quantity, RequestedTool.quantity),
+                RequestModel.date_approved, RequestModel.date_requested,
+            )
+            .join(RequestModel, RequestedTool.request_id == RequestModel.id)
+            .join(Users, RequestModel.user_id == Users.id)
+            .filter(RequestedTool.tool_id == tool_id,
+                    RequestModel.status.in_(["Approved", "Delivered"]))
+            .all())
+    out = {}
+    for fac, qty, appr, reqd in rows:
+        if not fac:
+            continue
+        fac = fac.strip()
+        dt = appr or reqd
+        d = dt.date() if dt else None
+        if d is None or not (from_date <= d <= to_date):
+            continue
+        out[fac] = out.get(fac, 0) + int(qty or 0)
+    return out
+
+
+def _utilization_last_delivery(facility, tool_id, dmap=None):
+    """Return (start_date, given_count) based on the MOST RECENT APPROVED request
+    of tool_id to facility (status Approved/Delivered). given_count is the raw
+    approved quantity (pack applied later)."""
+    if dmap is not None:
+        entry = dmap.get((facility.strip(), int(tool_id)))
+        if not entry:
+            return None, None
+        start, raw_given = entry
+        start = start.date() if start else None
+        return start, raw_given
+
+    rows = (db.session.query(RequestedTool.tool_id, Users.facility,
+                             RequestModel.date_approved, RequestModel.date_requested,
+                             RequestedTool.approved_quantity, RequestedTool.quantity)
+            .join(RequestModel, RequestedTool.request_id == RequestModel.id)
+            .join(Users, RequestModel.user_id == Users.id)
+            .filter(Users.facility == facility, RequestedTool.tool_id == tool_id,
+                    RequestModel.status.in_(["Approved", "Delivered"]))
+            .all())
+    if not rows:
+        return None, None
+
+    best_dt = None
+    best_qty = 0
+    for _tid, _fac, appr, reqd, aq, qty in rows:
+        dt = appr or reqd or datetime.min
+        if best_dt is None or dt > best_dt:
+            best_dt = dt
+            best_qty = (aq if aq is not None else (qty or 0))
+    start = best_dt.date() if best_dt else None
+    return start, best_qty
+
+
+def _utilization_match_norms(db_fac, report_norms):
+    """Return the set of normalized report facility names matching a DB facility."""
+    n = _utilization_norm(db_fac)
+    if not n:
+        return set()
+    if n in report_norms:
+        return {n}
+    out = set()
+    for rn in report_norms:
+        if rn and (rn in n or n in rn):
+            out.add(rn)
+    return out
+
+
+def _si_management_emails():
+    """Case-insensitive set of S.I. management recipient emails."""
+    entries = []
+    s = SystemSetting.query.filter_by(key="si_management_entries").first()
+    if s and s.value:
+        try:
+            entries = json.loads(s.value)
+        except Exception:
+            pass
+    if not entries:
+        legacy = SystemSetting.query.filter_by(key="si_management_email").first()
+        if legacy and legacy.value:
+            entries = [{"email": legacy.value.strip()}]
+    return {(e.get("email") or "").strip().lower() for e in entries if e.get("email")}
+
+
+def _utilization_visible_facilities(user):
+    """Return the set of facility names the user can see in utilization, or None for ALL."""
+    if _is_admin_user(user):
+        return None
+    # S.I. management see all facilities
+    if (user.email or "").strip().lower() in _si_management_emails():
+        return None
+    # supervisors see the facilities they supervise
+    if getattr(user, "is_supervisor", False) and user.supervised_facilities:
+        try:
+            facs = json.loads(user.supervised_facilities or "[]")
+        except Exception:
+            facs = []
+        facs = [f.strip() for f in facs if f and f.strip()]
+        if facs:
+            return set(facs)
+    # otherwise, only their own facility
+    if user.facility:
+        return {user.facility}
+    return set()
+
+
+@api_bp.route("/admin/utilization/upload", methods=["POST"])
+@login_required
+def admin_upload_utilization():
+    """Upload RADET / HTS / PrEP report(s) -> compute per-facility utilization for
+    the mapped tools -> store results (persisted for all users to view)."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    radet_file = request.files.get("radet_file")
+    hts_file   = request.files.get("hts_file")
+    prep_file  = request.files.get("prep_file")
+    uploaded = [f for f in (radet_file, hts_file, prep_file) if f and f.filename]
+    if not uploaded:
+        return jsonify({"error": "Upload at least one report (RADET, HTS or PrEP)."}), 400
+
+    def _read(report_type, fobj):
+        raw = fobj.read()
+        if not raw:
+            raise ValueError("Empty file")
+        try:
+            import python_calamine  # noqa: F401  (fast Rust reader, fallback to openpyxl)
+            engine = "calamine"
+        except Exception:
+            engine = None
+
+        def _rd(**kw):
+            return pd.read_excel(BytesIO(raw), engine=engine, **kw) if engine else pd.read_excel(BytesIO(raw), **kw)
+
+        df0 = _rd(nrows=1)
+        cols = list(df0.columns)
+        fac_col = _utilization_find_col(df0, REPORT_FACILITY_COLS[report_type])
+        want = [fac_col] if fac_col else []
+        want += [m["date_col"] for m in UTILIZATION_TOOLS if m["report"] == report_type and m["date_col"] in cols]
+        want = list(dict.fromkeys(c for c in want if c))
+        return _rd(usecols=want) if want else _rd()
+
+    reports = {}
+    errors = {}
+    if radet_file and radet_file.filename:
+        try:
+            reports["RADET"] = _read("RADET", radet_file)
+        except Exception as e:
+            errors["RADET"] = f"Could not read RADET file: {e}"
+    if hts_file and hts_file.filename:
+        try:
+            reports["HTS"] = _read("HTS", hts_file)
+        except Exception as e:
+            errors["HTS"] = f"Could not read HTS file: {e}"
+    if prep_file and prep_file.filename:
+        try:
+            reports["PREP"] = _read("PREP", prep_file)
+        except Exception as e:
+            errors["PREP"] = f"Could not read PrEP file: {e}"
+
+    # Real facilities only: exclude admin/HQ "facilities" (e.g. State Office Team).
+    admin_facs = {u.facility for u in Users.query.all() if _is_admin_user(u) and u.facility}
+    db_facilities = sorted(
+        f for f in {(u.facility or "").strip() for u in Users.query.all() if u.facility}
+        if f and f not in admin_facs
+    )
+    delivery_map = _utilization_approval_map()
+
+    # Cache per (report, date_col): (fac_norm -> row idx list, date_int array, norm set)
+    combo_cache = {}
+
+    def _get_combo(report, date_col):
+        key = (report, date_col)
+        if key not in combo_cache:
+            df = reports[report]
+            fac_col = _utilization_find_col(df, REPORT_FACILITY_COLS[report])
+            if not fac_col or date_col not in df.columns:
+                combo_cache[key] = None
+                return None
+            fac_arr = df[fac_col].fillna("").astype(str).map(_utilization_norm).values
+            dates = pd.to_datetime(df[date_col], errors="coerce")
+            valid = dates.notna().values
+            date_int = np.full(len(dates), -1, dtype=np.int64)
+            date_int[valid] = (
+                dates[valid].dt.year * 10000 + dates[valid].dt.month * 100 + dates[valid].dt.day
+            ).values
+            norm_to_idx = {}
+            for i in range(len(fac_arr)):
+                n = fac_arr[i]
+                if n and date_int[i] != -1:
+                    norm_to_idx.setdefault(n, []).append(i)
+            combo_cache[key] = (norm_to_idx, date_int, set(norm_to_idx.keys()))
+        return combo_cache[key]
+
+    computed = []
+    for mapping in UTILIZATION_TOOLS:
+        if mapping["report"] not in reports:
+            continue
+        tool = Tool.query.filter(func.lower(Tool.name) == mapping["name"].lower()).first()
+        if not tool:
+            continue
+        combo_data = _get_combo(mapping["report"], mapping["date_col"])
+        if combo_data is None:
+            errors[mapping["report"]] = (
+                f"Missing columns: facility or '{mapping['date_col']}' not found in {mapping['report']}."
+            )
+            continue
+        norm_to_idx, date_int, report_norms = combo_data
+        pack = UTILIZATION_PACK.get(mapping["kind"], 1)
+
+        for fac in db_facilities:
+            start, raw_given = _utilization_last_delivery(fac, tool.id, dmap=delivery_map)
+            if start is None or raw_given is None or raw_given <= 0:
+                continue
+            given = raw_given * pack
+            norms = _utilization_match_norms(fac, report_norms)
+            achieved = 0
+            matched_idx = []
+            if norms:
+                s_int = start.year * 10000 + start.month * 100 + start.day
+                for n in norms:
+                    idx = norm_to_idx.get(n)
+                    if idx:
+                        matched_idx.extend(idx)
+                        achieved += int((date_int[idx] >= s_int).sum())
+            # Daily histogram {yyyymmdd: count} for this facility+tool (all dates, no window)
+            daily = {}
+            if matched_idx:
+                dvals = date_int[matched_idx]
+                dvals = dvals[dvals != -1]
+                if len(dvals):
+                    uniq, cnts = np.unique(dvals, return_counts=True)
+                    daily = {str(int(u)): int(c) for u, c in zip(uniq, cnts)}
+            pct = round(achieved / given * 100, 1) if given else None
+
+            row = UtilizationResult.query.filter_by(facility=fac, tool_id=tool.id).first()
+            if not row:
+                row = UtilizationResult(facility=fac, tool_id=tool.id)
+            row.report_type = mapping["report"]
+            row.date_column = mapping["date_col"]
+            row.given = given
+            row.achieved = achieved
+            row.utilization_pct = pct
+            row.start_date = start
+            row.daily_counts = json.dumps(daily)
+            db.session.add(row)
+            computed.append(row.to_dict())
+
+        # State-wide aggregate daily histogram (ALL report rows, all facilities).
+        # Powers the admin State tab so "used" reflects the whole report, not only
+        # facilities that happen to have a delivery record in the system.
+        state_daily = {}
+        dvals_all = date_int[date_int != -1]
+        if len(dvals_all):
+            uniq, cnts = np.unique(dvals_all, return_counts=True)
+            state_daily = {str(int(u)): int(c) for u, c in zip(uniq, cnts)}
+        state_row = UtilizationResult.query.filter_by(
+            facility=UTILIZATION_STATE_FACILITY, tool_id=tool.id).first()
+        if not state_row:
+            state_row = UtilizationResult(facility=UTILIZATION_STATE_FACILITY, tool_id=tool.id)
+        state_row.report_type = mapping["report"]
+        state_row.date_column = mapping["date_col"]
+        state_row.given = 0
+        state_row.achieved = 0
+        state_row.utilization_pct = None
+        state_row.start_date = None
+        state_row.daily_counts = json.dumps(state_daily)
+        db.session.add(state_row)
+
+    db.session.commit()
+
+    # Drop stale results for mapped tools whose report was uploaded: remove any row
+    # whose facility no longer has a delivery of that tool. (Tools whose report was
+    # NOT uploaded this time keep their last-known values.)
+    uploaded_reports = set(reports.keys())
+    for mapping in UTILIZATION_TOOLS:
+        if mapping["report"] not in uploaded_reports:
+            continue
+        tool = Tool.query.filter(func.lower(Tool.name) == mapping["name"].lower()).first()
+        if not tool:
+            continue
+        for s in UtilizationResult.query.filter_by(tool_id=tool.id).all():
+            if s.facility == UTILIZATION_STATE_FACILITY:
+                continue  # the state-aggregate row is maintained separately
+            _, raw_given = _utilization_last_delivery(s.facility, tool.id, dmap=delivery_map)
+            if raw_given is None or raw_given <= 0:
+                db.session.delete(s)
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "computed_at": datetime.utcnow().isoformat(),
+        "count": len(computed),
+        "results": computed,
+        "errors": errors,
+        "threshold": UTILIZATION_THRESHOLD,
+    }), 200
+
+
+@api_bp.route("/utilization", methods=["GET"])
+@login_required
+def list_utilization():
+    """Return stored utilization results visible to the current user."""
+    visible = _utilization_visible_facilities(current_user)
+    q = UtilizationResult.query.options(joinedload(UtilizationResult.tool))
+    if visible is not None:
+        q = q.filter(UtilizationResult.facility.in_(visible))
+    q = q.filter(UtilizationResult.facility != UTILIZATION_STATE_FACILITY)
+    rows = q.order_by(UtilizationResult.facility, UtilizationResult.tool_id).all()
+    results = [r.to_dict() for r in rows]
+    for r in results:
+        r.update(_utilization_units_for(r.get("tool_name"), r.get("given") or 0, r.get("achieved") or 0))
+
+    # group by facility for convenience
+    by_facility = {}
+    for r in results:
+        by_facility.setdefault(r["facility"], []).append(r)
+
+    return jsonify({
+        "threshold": UTILIZATION_THRESHOLD,
+        "count": len(results),
+        "results": results,
+        "by_facility": by_facility,
+        "visible_facilities": sorted(visible) if visible is not None else None,
+    }), 200
+
+
+@api_bp.route("/utilization/state", methods=["GET"])
+@login_required
+def utilization_state():
+    """State-level aggregate per mapped tool for a selected period (from/to optional).
+    given = ADMIN-APPROVED quantities of the tool within the period (pack-adjusted).
+    achieved = sum of report counts within the period (from stored daily histograms)."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    from_str = (request.args.get("from") or "").strip()
+    to_str   = (request.args.get("to")   or "").strip()
+
+    def _parse(s, default):
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return default
+
+    from_date = _parse(from_str, (datetime.utcnow() - timedelta(days=90)).date())
+    to_date   = _parse(to_str, datetime.utcnow().date())
+
+    f_int = from_date.year * 10000 + from_date.month * 100 + from_date.day
+    t_int = to_date.year * 10000 + to_date.month * 100 + to_date.day
+
+    results = []
+    for mapping in UTILIZATION_TOOLS:
+        tool = Tool.query.filter(func.lower(Tool.name) == mapping["name"].lower()).first()
+        if not tool:
+            continue
+        pack = UTILIZATION_PACK.get(mapping["kind"], 1)
+
+        # given in period = ALL admin-approved requests of this tool within [from,to]
+        # (pack-adjusted). Sums every approval in the period so the total matches the
+        # per-facility breakdown shown when the card is clicked.
+        given_map = _utilization_approvals_in_period(tool.id, from_date, to_date)
+        given = sum(given_map.values()) * pack
+        facs_with_given = set(given_map)
+
+        # achieved in period = state-wide report counts within [from,to], summed
+        # from the state-aggregate histogram (ALL facilities in the report).
+        achieved = 0
+        state_row = UtilizationResult.query.filter_by(
+            facility=UTILIZATION_STATE_FACILITY, tool_id=tool.id).first()
+        if state_row and state_row.daily_counts:
+            try:
+                daily = json.loads(state_row.daily_counts or "{}")
+            except Exception:
+                daily = {}
+            for ds, cnt in daily.items():
+                try:
+                    if f_int <= int(ds) <= t_int:
+                        achieved += int(cnt)
+                except Exception:
+                    pass
+
+        pct = round(achieved / given * 100, 1) if given else None
+        units = _utilization_units_for(tool.name, given, achieved)
+        results.append({
+            "tool_id": tool.id,
+            "tool_name": tool.name,
+            "report_type": mapping["report"],
+            "kind": mapping["kind"],
+            "given": given,
+            "achieved": achieved,
+            "given_units": units["given_units"],
+            "achieved_units": units["achieved_units"],
+            "utilization_pct": pct,
+            "under_utilized": pct is not None and given > 0 and pct < UTILIZATION_THRESHOLD,
+            "facilities": len(facs_with_given),
+        })
+
+    return jsonify({
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "threshold": UTILIZATION_THRESHOLD,
+        "results": results,
+    }), 200
+
+
+@api_bp.route("/utilization/state/facilities", methods=["GET"])
+@login_required
+def utilization_state_facilities():
+    """Per-facility breakdown for ONE tool within a period (used by the admin State
+    tab when a tool card is clicked). Each row = a facility that was given the tool
+    in the period: given (approved qty in period, pack-adjusted), used (report counts
+    in period), utilization %, status."""
+    if not _is_admin_user(current_user):
+        return _admin_required_json()
+
+    tool_id = request.args.get("tool_id", type=int)
+    if not tool_id:
+        return jsonify({"error": "tool_id is required"}), 400
+
+    tool = Tool.query.get(tool_id)
+    if not tool:
+        return jsonify({"error": "Tool not found"}), 404
+
+    mapping = None
+    for m in UTILIZATION_TOOLS:
+        if (m.get("name") or "").lower() == (tool.name or "").lower():
+            mapping = m
+            break
+    if not mapping:
+        return jsonify({"error": "Tool is not a utilization tool"}), 400
+    pack = UTILIZATION_PACK.get(mapping["kind"], 1)
+
+    from_str = (request.args.get("from") or "").strip()
+    to_str   = (request.args.get("to")   or "").strip()
+
+    def _parse(s, default):
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return default
+
+    from_date = _parse(from_str, (datetime.utcnow() - timedelta(days=90)).date())
+    to_date   = _parse(to_str, datetime.utcnow().date())
+    f_int = from_date.year * 10000 + from_date.month * 100 + from_date.day
+    t_int = to_date.year * 10000 + to_date.month * 100 + to_date.day
+
+    # given per facility = ALL approved quantities of this tool within [from,to]
+    given_map = _utilization_approvals_in_period(tool_id, from_date, to_date)
+
+    # used per facility = sum of that facility's stored daily_counts within [from,to]
+    used_map = {}
+    for r in UtilizationResult.query.filter_by(tool_id=tool_id, report_type=mapping["report"]).all():
+        if r.facility == UTILIZATION_STATE_FACILITY:
+            continue
+        if not r.daily_counts:
+            continue
+        try:
+            daily = json.loads(r.daily_counts or "{}")
+        except Exception:
+            continue
+        total = 0
+        for ds, cnt in daily.items():
+            try:
+                if f_int <= int(ds) <= t_int:
+                    total += int(cnt)
+            except Exception:
+                pass
+        used_map[r.facility] = total
+
+    rows = []
+    for fac in sorted(given_map):
+        given = given_map[fac] * pack
+        used = used_map.get(fac, 0)
+        pct = round(used / given * 100, 1) if given else None
+        rows.append({
+            "facility": fac,
+            "given": given,
+            "given_units": round(given / pack, 1) if pack else given,
+            "used": used,
+            "used_units": round(used / pack, 1) if pack else used,
+            "utilization_pct": pct,
+            "under_utilized": pct is not None and given > 0 and pct < UTILIZATION_THRESHOLD,
+        })
+
+    return jsonify({
+        "tool_id": tool.id,
+        "tool_name": tool.name,
+        "kind": mapping["kind"],
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "threshold": UTILIZATION_THRESHOLD,
+        "count": len(rows),
+        "results": rows,
+    }), 200
+
+
+def _utilization_for_tool(facility, tool_id):
+    """Stored utilization summary for a facility+tool (or None)."""
+    u = UtilizationResult.query.filter_by(facility=facility, tool_id=int(tool_id)).first()
+    if not u or u.given <= 0:
+        return None
+    result = {
+        "given": u.given,
+        "achieved": u.achieved,
+        "utilization_pct": round(u.utilization_pct, 1) if u.utilization_pct is not None else None,
+        "under_utilized": u.utilization_pct is not None and u.utilization_pct < UTILIZATION_THRESHOLD,
+        "start_date": u.start_date.isoformat() if u.start_date else None,
+    }
+    result.update(_utilization_units_for(u.tool.name if u.tool else None, u.given, u.achieved))
+    return result
+
+
+def _enrich_tools_with_utilization(tools_list, facility):
+    """Attach a 'utilization' dict to each tool in the list (used by S.I. email/page)."""
+    out = []
+    for t in tools_list:
+        tid = t.get("tool_id")
+        if tid:
+            u = _utilization_for_tool(facility, tid)
+            if u:
+                t = dict(t)
+                t["utilization"] = u
+        out.append(t)
+    return out
+
+
+def _utilization_warning_message(tool_name, u):
+    pct = u.get("utilization_pct")
+    given = u.get("given", 0)
+    achieved = u.get("achieved", 0)
+
+    def _fmt(v):
+        v = float(v or 0)
+        return str(int(v)) if v == int(v) else f"{v:g}"
+
+    if u.get("kind") == "form":
+        g_text = f"{_fmt(u.get('given_units'))} booklets ({_fmt(given)} sheets)"
+        a_text = f"{_fmt(u.get('achieved_units'))} booklets ({_fmt(achieved)} sheets)"
+    else:
+        g_text = f"{_fmt(given)} cards"
+        a_text = f"{_fmt(achieved)} cards"
+    return (
+        f"You have used only {pct}% ({a_text} of {g_text}) of the '{tool_name}' previously given "
+        f"to your facility. Your request might likely be rejected because the tool was under-utilized."
+    )
+
+
 @api_bp.route("/admin/utilization/calculate", methods=["POST"])
 @login_required
 def calculate_utilization():
@@ -5130,22 +5879,63 @@ def _stock_threshold_for_tool(tool):
 def check_stock_before_request():
     data = _json_body()
     tool_id = _safe_int(data.get("tool_id"))
+    requested_qty = _safe_int(data.get("quantity"), 0)
     facility = current_user.facility
-    if not facility or not tool_id:
-        return jsonify({"warn": False, "block": False}), 200
+    if not tool_id:
+        return jsonify({"warn": False, "block": False, "utilization_warning": None}), 200
+
     tool = Tool.query.get(tool_id)
     threshold = _stock_threshold_for_tool(tool)
+    tool_name = tool.name if tool else "this tool"
+
+    # ─── Utilization check: has this facility under-used this tool previously? ───
+    util_warning = None
+    if facility:
+        u = _utilization_for_tool(facility, tool_id)
+        if u and u.get("under_utilized"):
+            util_warning = {
+                "message": _utilization_warning_message(tool_name, u),
+                "given": u.get("given"),
+                "achieved": u.get("achieved"),
+                "utilization_pct": u.get("utilization_pct"),
+                "threshold": UTILIZATION_THRESHOLD,
+            }
+
+    # ─── State-level stock check ───
+    state_qty = tool.quantity if tool else 0
+    if state_qty <= 0:
+        return jsonify({
+            "warn": True,
+            "block": True,
+            "message": f"'{tool_name}' is currently out of stock at the state level and is not available.",
+            "state_stock": state_qty,
+            "utilization_warning": util_warning,
+        }), 200
+    if requested_qty > state_qty:
+        return jsonify({
+            "warn": True,
+            "block": False,
+            "message": f"You requested {requested_qty}, but only {state_qty} is currently available at the state level.",
+            "state_stock": state_qty,
+            "requested_qty": requested_qty,
+            "utilization_warning": util_warning,
+        }), 200
+
+    # ─── Facility-level stock check (informational) ───
+    if not facility:
+        return jsonify({"warn": False, "block": False, "utilization_warning": None}), 200
     stock = FacilityStock.query.filter_by(facility=facility, tool_id=tool_id).first()
     current_qty = stock.quantity if stock else 0
     if current_qty > threshold:
         return jsonify({
             "warn": True,
             "block": True,
-            "message": f"You already have {current_qty} units of '{tool.name if tool else 'this tool'}' in stock, so it was not added to your request.",
+            "message": f"You already have {current_qty} units of '{tool_name}' in stock, so it was not added to your request.",
             "current_stock": current_qty,
             "threshold": threshold,
+            "utilization_warning": util_warning,
         }), 200
-    return jsonify({"warn": False, "block": False}), 200
+    return jsonify({"warn": False, "block": False, "utilization_warning": util_warning}), 200
 
 
 # ---------------------------------------------------------------------------
@@ -5257,12 +6047,13 @@ def apply_app_update():
 
     data = request.get_json(silent=True) or {}
     download_url = data.get("download_url")
+    version = data.get("version")  # target version, used for the post-restart success marker
     if not download_url:
         return jsonify({"ok": False, "error": "Missing download_url"}), 400
 
     import threading
     flask_app = current_app._get_current_object()
-    threading.Thread(target=_run_update, args=(flask_app, download_url), daemon=True).start()
+    threading.Thread(target=_run_update, args=(flask_app, download_url, version), daemon=True).start()
     return jsonify({"ok": True, "status": "started"}), 200
 
 
@@ -5272,22 +6063,49 @@ def update_progress():
     return jsonify(_update_progress), 200
 
 
-def _run_update(flask_app, download_url):
+@api_bp.route("/app/update-status", methods=["GET"])
+def app_update_status():
+    """One-shot: returns (and clears) a marker written just before an in-place
+    update, so the freshly-restarted app can confirm the update succeeded.
+    Public on purpose — after a restart the session may be gone."""
+    import os
+    import json
+    marker = os.path.join(_tims_data_dir(), "update_success.json")
+    try:
+        if os.path.isfile(marker):
+            with open(marker, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            try:
+                os.remove(marker)
+            except Exception:
+                pass
+            return jsonify({"updated_to": data.get("version")}), 200
+    except Exception:
+        pass
+    return jsonify({"updated_to": None}), 200
+
+
+def _tims_data_dir():
+    import os
+    return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TIMS")
+
+
+def _run_update(flask_app, download_url, version=None):
     """Download the new .exe (reporting progress), then spawn a detached batch
     that kills this process (child + bootloader parent), replaces the .exe
-    in-place, and restarts it."""
+    in-place (verified by file size), and restarts it."""
     import urllib.request
     import tempfile
     import subprocess
     import sys
     import os
     import time
+    import json
 
     try:
         _update_progress.update(status="downloading", percent=0, message="Downloading update…", downloaded=0, total=0)
 
         exe_path = sys.executable
-        exe_dir = os.path.dirname(exe_path)
         new_exe = os.path.join(tempfile.gettempdir(), f"TIMS_update_{int(time.time())}.exe")
 
         # 1. Download with progress
@@ -5307,43 +6125,67 @@ def _run_update(flask_app, download_url):
                     if total:
                         _update_progress["percent"] = min(99, int(downloaded * 100 / total))
 
+        # Sanity check: the download must be complete before we replace the exe.
+        if total and downloaded != total:
+            raise RuntimeError(f"Download incomplete ({downloaded}/{total} bytes)")
+
         _update_progress.update(percent=99, status="installing", message="Installing update…")
 
-        # 2. Build a robust batch script.
-        #    Kill the Python child first, then the bootloader parent (so the on-disk
-        #    exe is released), retry the copy (the exe may be briefly locked), then start.
+        data_dir = _tims_data_dir()
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        # 2. One-shot success marker read by the restarted app to show "Update Successful".
+        marker = os.path.join(data_dir, "update_success.json")
+        try:
+            with open(marker, "w", encoding="utf-8") as f:
+                json.dump({"version": version or ""}, f)
+        except Exception:
+            pass
+
+        # 3. Build a robust batch script. Lives in the writable TIMS data dir
+        #    (not next to the exe, which may be in a read-only folder).
         child_pid = os.getpid()
         parent_pid = os.getppid()
-        bat_path = os.path.join(exe_dir, "update_tims.bat")
+        bat_path = os.path.join(data_dir, "update_tims.bat")
         script = (
             "@echo off\r\n"
             "chcp 65001 >nul\r\n"
-            'echo [%date% %time%] update script started >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
+            'set "LOG=%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
+            'echo [%date% %time%] update script started >> "%LOG%"\r\n'
             f"taskkill /F /PID {child_pid} >nul 2>&1\r\n"
             f"taskkill /F /PID {parent_pid} >nul 2>&1\r\n"
             "timeout /t 3 /nobreak >nul\r\n"
             "set /a R=0\r\n"
             ":copy_loop\r\n"
             f'copy /Y "{new_exe}" "{exe_path}" >nul 2>&1\r\n'
-            f'if exist "{exe_path}" goto copied\r\n'
+            # Verify the new exe actually replaced the old one (sizes must match).
+            # The old exe may exist even when the copy fails (still locked), so
+            # `if exist` is NOT a reliable check — compare file sizes instead.
+            f'for %%A in ("{new_exe}") do set "NS=%%~zA"\r\n'
+            f'for %%A in ("{exe_path}") do set "ES=%%~zA"\r\n'
+            'if "%NS%"=="%ES%" if defined ES if not "%ES%"=="0" goto copied\r\n'
             "set /a R+=1\r\n"
-            "if %R% LSS 8 ( timeout /t 1 /nobreak >nul & goto copy_loop )\r\n"
+            "if %R% LSS 10 ( timeout /t 1 /nobreak >nul & goto copy_loop )\r\n"
+            'echo [%date% %time%] WARNING copy verification failed after %R% attempts >> "%LOG%"\r\n'
             ":copied\r\n"
-            'echo [%date% %time%] exe replaced, restarting >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
+            'echo [%date% %time%] exe replaced, restarting >> "%LOG%"\r\n'
             f'del "{new_exe}" >nul 2>&1\r\n'
             f'start "" "{exe_path}"\r\n'
-            'echo [%date% %time%] done >> "%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
+            'echo [%date% %time%] done >> "%LOG%"\r\n'
             'del "%~f0" >nul 2>&1\r\n'
         )
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write(script)
 
-        # 3. Launch the script detached so the response can reach the frontend first.
+        # 4. Launch the script detached so the response can reach the frontend first.
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         subprocess.Popen(
             ["cmd", "/c", bat_path],
-            cwd=exe_dir,
+            cwd=data_dir,
             creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )
@@ -5439,17 +6281,90 @@ def _supervisor_page(title, message, kind="neutral"):
 </div></body></html>"""
 
 
-def _supervisor_confirm_page(req_id, facility, requester_name, role_label, action, token, tools_list):
-    from mailer import _render_tools_table, _esc
+def _supervisor_confirm_page(req_id, facility, requester_name, role_label, action, token, tools_list, stock_source="facility", allow_quantities=False, secondary_action=None, secondary_token=None):
+    from mailer import _render_tools_table, _esc, _available_stock
     is_approve = action == "approved"
     action_word = "Approve" if is_approve else "Reject"
     accent = "#059669" if is_approve else "#dc2626"
     emoji = "&#10003;" if is_approve else "&#10007;"
-    table = _render_tools_table(tools_list, facility, show_stock=True)
+    if allow_quantities:
+        # S.I. review: let the reviewer set the actual approved quantity per tool.
+        rows = []
+        for t in tools_list:
+            name = _esc(t.get("name", "Unknown"))
+            qty = t.get("quantity", 0)
+            stock = _available_stock(facility, t.get("tool_id"), source=stock_source)
+            stock_str = str(stock) if stock is not None else "&mdash;"
+            tid = t.get("tool_id", "")
+            name_cell = name
+            util = t.get("utilization")
+            if util:
+                pct = util.get("utilization_pct")
+                given = util.get("given")
+                achieved = util.get("achieved")
+                under = bool(util.get("under_utilized"))
+                color = "#b45309" if under else "#047857"
+                note = f"Utilization: {pct}% (used {achieved} of {given})"
+                if under:
+                    note += " &mdash; under-utilized"
+                name_cell += (
+                    f'<div style="font-size:11px;color:{color};margin-top:4px;font-weight:600;line-height:1.4;">'
+                    f"{note}</div>"
+                )
+            rows.append(
+                f"<tr style=\"border-bottom:1px solid #f1f5f9;\">"
+                f'<td style="padding:12px 14px;color:#334155;font-size:14px;">{name_cell}</td>'
+                f'<td style="padding:12px 14px;text-align:center;color:#334155;font-size:14px;font-weight:600;">{qty}</td>'
+                f'<td style="padding:12px 14px;text-align:center;color:#64748b;font-size:14px;">{stock_str}</td>'
+                f'<td style="padding:10px 14px;text-align:center;">'
+                f'<input type="number" name="qty_{tid}" value="{qty}" min="0" max="{stock if stock is not None else qty}" '
+                f'style="width:72px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;text-align:center;font-weight:600;color:#0f172a;"/>'
+                f'</td></tr>'
+            )
+        table = (
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin:16px 0 24px;">'
+            '<thead><tr style="background:#f8fafc;">'
+            '<th style="padding:12px 14px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Tool / Item</th>'
+            '<th style="padding:12px 14px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Requested</th>'
+            '<th style="padding:12px 14px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Available</th>'
+            '<th style="padding:12px 14px;text-align:center;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Approve Qty</th>'
+            '</tr></thead><tbody>'
+            f"{''.join(rows)}"
+            '</tbody></table>'
+        )
+        qty_note = (
+            '<p style="margin:0 0 16px;color:#64748b;font-size:13px;line-height:1.6;">'
+            'You can adjust the <strong>approved quantity</strong> for each item below (the numbers are '
+            'pre-filled with the requested quantity). Leave them as-is to approve the full request.'
+            '</p>'
+        )
+    else:
+        table = _render_tools_table(tools_list, facility, show_stock=True, stock_source=stock_source)
+        qty_note = ""
+
+    # Primary action button (the action of the token this page was opened with).
+    primary_btn = (
+        f'<button type="submit" onclick="document.getElementById(\'action_token\').value=\'{token}\';" '
+        f'style="flex:1;background:{accent};color:#ffffff;border:none;padding:16px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">'
+        f'{emoji}&nbsp; Confirm {action_word}</button>'
+    )
+    # Secondary (opposite) button — e.g. Reject when opened from the Approve link.
+    secondary_btn = ""
+    if secondary_token and secondary_action:
+        sec_is_approve = secondary_action == "approved"
+        sec_word = "Approve Request" if sec_is_approve else "Reject Request"
+        sec_accent = "#059669" if sec_is_approve else "#dc2626"
+        sec_emoji = "&#10003;" if sec_is_approve else "&#10007;"
+        secondary_btn = (
+            f'<button type="submit" onclick="document.getElementById(\'action_token\').value=\'{secondary_token}\';" '
+            f'style="flex:1;background:#ffffff;color:{sec_accent};border:2px solid {sec_accent};padding:16px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">'
+            f'{sec_emoji}&nbsp; {sec_word}</button>'
+        )
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.08);overflow:hidden;">
+<div style="max-width:640px;margin:40px auto;background:#ffffff;border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,0.08);overflow:hidden;">
   <div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);padding:32px 40px;">
     <div style="font-size:12px;color:#93c5fd;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">ECEWS Tools Inventory</div>
     <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;">{role_label} Review</h1>
@@ -5458,15 +6373,16 @@ def _supervisor_confirm_page(req_id, facility, requester_name, role_label, actio
   <div style="padding:32px 40px;">
     <p style="margin:0 0 20px;color:#334155;font-size:15px;line-height:1.6;">
       <strong>{_esc(requester_name)}</strong> from <strong>{_esc(facility)}</strong> has submitted a request.
-      Please confirm the action below. No action is taken until you click the button.
+      Please confirm the action below. No action is taken until you click a button.
     </p>
-    {table}
-    <p style="margin:20px 0 8px;color:#64748b;font-size:13px;line-height:1.6;">
-      Clicking the button below will <strong>{action_word.lower()}</strong> this request.
-    </p>
-    <form method="POST" action="/api/supervisor/action" style="margin-top:12px;">
-      <input type="hidden" name="token" value="{token}" />
-      <button type="submit" style="width:100%;background:{accent};color:#ffffff;border:none;padding:16px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;">{emoji}&nbsp; Confirm {action_word}</button>
+    <form method="POST" action="/api/supervisor/action" id="reviewForm">
+      <input type="hidden" name="token" id="action_token" value="{token}" />
+      {qty_note}
+      {table}
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        {primary_btn}
+        {secondary_btn}
+      </div>
     </form>
   </div>
   <div style="padding:20px 40px;background-color:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:12px;">TIMS &mdash; Tools Inventory Management System</div>
@@ -5475,7 +6391,7 @@ def _supervisor_confirm_page(req_id, facility, requester_name, role_label, actio
 
 @api_bp.route("/supervisor/action", methods=["GET", "POST"])
 def supervisor_email_action():
-    from mailer import _verify_action_token, notify_si_management_of_request, _esc
+    from mailer import _verify_action_token, _make_action_token, notify_si_management_of_request, _esc
 
     # POST performs the action; GET only shows a confirmation page (no action),
     # so email security scanners that fetch links can never auto-approve.
@@ -5516,9 +6432,40 @@ def supervisor_email_action():
     # GET: show confirmation page (do NOT act)
     if request.method == "GET":
         role_label = "Facility Supervisor" if role == "facility_supervisor" else "S.I. Management"
+        # Facility supervisor sees their facility stock; S.I. sees the state/central stock.
+        stock_source = "state" if role == "si_management" else "facility"
+        # S.I. (Super Supervisors) can set the actual approved quantity per tool.
+        allow_quantities = role == "si_management"
+
+        # Provide the opposite-action button too (e.g. Reject when opened from the
+        # Approve link). Recreate the sibling token with the SAME expiry embedded in
+        # this token, so it matches the one already sent in the email (no orphans).
+        secondary_action = None
+        secondary_token = None
+        if allow_quantities:
+            try:
+                expiry = int(token.split("|")[4])
+                opposite = "rejected" if action == "approved" else "approved"
+                opp_token = _make_action_token(req_id, email, role, opposite, expiry=expiry)
+                opp_hash = hashlib.sha256(opp_token.encode()).hexdigest()
+                if not SupervisorAction.query.filter_by(token_hash=opp_hash).first():
+                    db.session.add(SupervisorAction(
+                        request_id=req_id, reviewer_email=email, reviewer_role=role,
+                        action="pending", token_hash=opp_hash))
+                    db.session.commit()
+                secondary_action = opposite
+                secondary_token = opp_token
+            except Exception:
+                pass
+
+        # S.I. sees each tool's utilization (given vs achieved) on the review page.
+        if role == "si_management":
+            tools_list = _enrich_tools_with_utilization(tools_list, facility_name)
+
         return _supervisor_confirm_page(req_id, facility_name,
                                         requester.first_name if requester else "Unknown",
-                                        role_label, action, token, tools_list), 200
+                                        role_label, action, token, tools_list, stock_source,
+                                        allow_quantities, secondary_action, secondary_token), 200
 
     # POST: perform the action
     if action == "approved":
@@ -5534,7 +6481,7 @@ def supervisor_email_action():
                         request_id=req_id,
                         facility_name=facility_name,
                         requester_name=requester.first_name if requester else "Unknown",
-                        tools_list=tools_list,
+                        tools_list=_enrich_tools_with_utilization(tools_list, facility_name),
                         supervisor_name=email,
                     )
                 except Exception:
@@ -5545,6 +6492,22 @@ def supervisor_email_action():
                 db.session.commit()
                 return _supervisor_page("Approved", "Your approval has been recorded. The request has been forwarded to admin.", "ok"), 200
         elif role == "si_management":
+            # Save the S.I.-approved quantity per tool (entered on the review page).
+            # These are submitted as form fields named qty_<tool_id>.
+            for ln in (request_obj.requested_tools or []):
+                field = request.form.get(f"qty_{ln.tool_id}")
+                if field is not None and str(field).strip() != "":
+                    try:
+                        q = int(float(field))
+                        if q >= 0:
+                            ln.approved_quantity = q
+                    except (ValueError, TypeError):
+                        pass
+            sa.approved_quantities = json.dumps({
+                str(ln.tool_id): ln.approved_quantity
+                for ln in (request_obj.requested_tools or [])
+                if ln.approved_quantity is not None
+            })
             request_obj.status = "Pending"
             db.session.commit()
             return _supervisor_page("Approved", "Your S.I. approval has been recorded. The request has been sent to admin.", "ok"), 200

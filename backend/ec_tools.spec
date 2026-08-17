@@ -54,6 +54,25 @@ if os.path.isfile(env_file):
 
 all_binaries = psycopg2_b + sqlalchemy_b + flask_b + alembic_b
 
+# ── Bundle base Python DLLs (venv builds miss _ctypes, _lzma, etc.) ──────────
+base_prefix = getattr(sys, 'base_prefix', sys.prefix)
+base_dlls_dir = os.path.join(base_prefix, "DLLs")
+lib_bin_dir = os.path.join(base_prefix, "Library", "bin")
+
+# Add .pyd files from base DLLs/ (the extension modules themselves)
+if os.path.isdir(base_dlls_dir):
+    for entry in os.listdir(base_dlls_dir):
+        if entry.endswith(('.dll', '.pyd')):
+            all_binaries.append((os.path.join(base_dlls_dir, entry), '.'))
+
+# Add dependency DLLs from Library/bin/ (ffi.dll, liblzma.dll, sqlite3.dll, etc.)
+if os.path.isdir(lib_bin_dir):
+    needed = {'ffi.dll', 'liblzma.dll', 'sqlite3.dll', 'libexpat.dll',
+              'libmpdec-4.dll', 'libffi-8.dll', 'LIBBZ2.dll'}
+    for entry in os.listdir(lib_bin_dir):
+        if entry.lower() in needed:
+            all_binaries.append((os.path.join(lib_bin_dir, entry), '.'))
+
 # ── Analysis ─────────────────────────────────────────────────────────────────
 
 a = Analysis(
@@ -69,6 +88,11 @@ a = Analysis(
         # trim size — not used
         "tkinter", "matplotlib", "scipy", "sklearn",
         "IPython", "notebook", "jupyter",
+        "numba", "llvmlite", "sphinx", "docutils",
+        "botocore", "boto3", "tables", "pyarrow",
+        "babel", "pytest", "hypothesis", "sympy",
+        "PIL.ImageQt", "PIL.ImageTk",
+        "pandas.tests",  # strip all pandas test modules
     ],
     noarchive=False,
 )

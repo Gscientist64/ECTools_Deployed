@@ -59,7 +59,7 @@ function Shell() {
     enabled: !loading && !!me?.id,
     isAdmin,
     pollMs: 30000,
-    snoozeMs: 15 * 60 * 1000,
+    snoozeMs: 60 * 60 * 1000,
     soundUrl: "/notify.mp3",
   });
 
@@ -115,6 +115,7 @@ function Shell() {
               <SidebarItem icon={Warehouse}      label="My Inventory"   active={tab==='myinventory'}  onClick={() => go('myinventory')} />
               <SidebarItem icon={FileText}       label="Delivery Notes" active={tab==='deliverynotes'} onClick={() => go('deliverynotes')} />
               <SidebarItem icon={ArrowRightLeft} label="Transfers"      active={tab==='transfers'}    onClick={() => go('transfers')} />
+              <SidebarItem icon={TrendingUp}     label="Tools Utilization" active={tab==='forecast'}  onClick={() => go('forecast')} />
             </>
           )}
 
@@ -153,7 +154,7 @@ function Shell() {
           {/* Admin screens */}
           {tab === 'tools'           && (isAdmin ? <ToolsScreen /> : null)}
           {tab === 'analysis'        && (isAdmin ? <AnalysisScreen /> : null)}
-          {tab === 'forecast'        && (isAdmin ? <ToolsForecastScreen /> : null)}
+          {tab === 'forecast'        && <ToolsForecastScreen isAdmin={isAdmin} />}
           {tab === 'reports'         && (isAdmin ? <ReportsScreen /> : null)}
           {tab === 'staff'           && (isAdmin ? <StaffScreen /> : null)}
           {tab === 'facilitystocks'  && (isAdmin ? <FacilityStocksScreen /> : null)}

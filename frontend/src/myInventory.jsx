@@ -408,7 +408,7 @@ function HistorySection() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, d] = await Promise.all([api.myUtilization(), api.myDistributions()]);
+      const [u, d] = await Promise.all([api.inventoryUtilization(), api.myDistributions()]);
       setUsage(Array.isArray(u) ? u : []);
       setDists(Array.isArray(d) ? d : []);
     } catch (e) { push(e.message, 'error'); }

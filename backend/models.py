@@ -5,6 +5,10 @@ from sqlalchemy import func, CheckConstraint
 from flask_login import UserMixin
 from extensions import db
 
+# A facility is considered to have UNDER-utilized a previously-given tool when they
+# have used less than this % of what they were given.
+UTILIZATION_THRESHOLD = 70.0
+
 # ---------- Users ----------
 class Users(db.Model, UserMixin):
     __tablename__ = 'users'
@@ -140,6 +144,7 @@ class RequestedTool(db.Model):
     tool_id    = db.Column(db.Integer, db.ForeignKey('tool.id'),    nullable=False)
     quantity   = db.Column(db.Integer, nullable=False)
     status     = db.Column(db.String(50), default='Pending')  # per-line status
+    approved_quantity = db.Column(db.Integer, nullable=True)  # S.I.-approved qty (may differ from requested)
 
     # relationships
     request = db.relationship('Request', back_populates='requested_tools')
@@ -151,6 +156,7 @@ class RequestedTool(db.Model):
             "request_id": self.request_id,
             "tool_name": self.tool.name if self.tool else None,
             "quantity": self.quantity,
+            "approved_quantity": self.approved_quantity,
             "status": self.status
         }
 
@@ -546,6 +552,7 @@ class SupervisorAction(db.Model):
     reviewer_role = db.Column(db.String(50), nullable=False)  # 'facility_supervisor' or 'si_management'
     action = db.Column(db.String(20), nullable=False)         # 'approved', 'rejected', or 'pending'
     reason = db.Column(db.Text, nullable=True)
+    approved_quantities = db.Column(db.Text, nullable=True)   # JSON {tool_id: qty} entered by S.I. on approval
     token_hash = db.Column(db.String(128), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -559,6 +566,7 @@ class SupervisorAction(db.Model):
             "reviewer_role": self.reviewer_role,
             "action": self.action,
             "reason": self.reason,
+            "approved_quantities": self.approved_quantities,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -579,4 +587,67 @@ class SystemSetting(db.Model):
             "key": self.key,
             "value": self.value,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class EmailLog(db.Model):
+    """Tracks supervisor/S.I. notification email deliveries per request, so admins
+    can see which emails failed and resend them."""
+    __tablename__ = 'email_log'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=True)
+    email      = db.Column(db.String(200), nullable=False)
+    role       = db.Column(db.String(50), nullable=False, default='facility_supervisor')  # facility_supervisor | si_management
+    status     = db.Column(db.String(20), nullable=False, default='failed')               # sent | failed
+    error      = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "request_id": self.request_id,
+            "email": self.email,
+            "role": self.role,
+            "status": self.status,
+            "error": self.error,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class UtilizationResult(db.Model):
+    """Stores the computed tool-utilization per facility per mapped tool, derived
+    from uploaded program reports (RADET/HTS/PREP) vs what was delivered.
+    Utilization < UTILIZATION_THRESHOLD% means the facility under-used the tool."""
+    __tablename__ = 'utilization_result'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    facility        = db.Column(db.String(200), nullable=False, index=True)   # DB facility name
+    tool_id         = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
+    report_type     = db.Column(db.String(20), nullable=False)                # RADET | HTS | PREP
+    date_column     = db.Column(db.String(120), nullable=True)                # report column that was counted
+    given           = db.Column(db.Integer, nullable=False, default=0)        # forms/cards given (pack-adjusted)
+    achieved        = db.Column(db.Integer, nullable=False, default=0)        # count from report since last delivery
+    utilization_pct = db.Column(db.Float, nullable=True)                      # achieved / given * 100
+    start_date      = db.Column(db.Date, nullable=True)                       # last delivery date of the tool
+    daily_counts    = db.Column(db.Text, nullable=True)                       # JSON {yyyymmdd: count} from the report
+    computed_at     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('facility', 'tool_id', name='uq_util_facility_tool'),)
+
+    tool = db.relationship('Tool')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "facility": self.facility,
+            "tool_id": self.tool_id,
+            "tool_name": self.tool.name if self.tool else None,
+            "report_type": self.report_type,
+            "given": self.given,
+            "achieved": self.achieved,
+            "utilization_pct": round(self.utilization_pct, 1) if self.utilization_pct is not None else None,
+            "under_utilized": self.utilization_pct is not None and self.given > 0 and self.utilization_pct < UTILIZATION_THRESHOLD,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "computed_at": self.computed_at.isoformat() if self.computed_at else None,
         }

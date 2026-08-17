@@ -6,7 +6,7 @@ import { useToast } from "./toasts";
 /**
  * Admin Pending Request Notifier
  * - Rings immediately when an admin is logged in and there is any pending request.
- * - Snoozes: rings again every 15 minutes while pending still exists.
+ * - Snoozes: rings again every 60 minutes while pending still exists.
  * - Stops immediately when no pending requests remain.
  *
  * IMPORTANT:
@@ -16,7 +16,7 @@ export function useAdminPendingRequestNotifier({
   enabled = false,
   isAdmin = false,
   pollMs = 30000,
-  snoozeMs = 30 * 60 * 1000,
+  snoozeMs = 60 * 60 * 1000,
   soundUrl = "/notify.mp3", // put notify.mp3 in frontend/public/notify.mp3
 } = {}) {
   const { push } = useToast();
