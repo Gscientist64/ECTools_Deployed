@@ -6090,13 +6090,115 @@ def _tims_data_dir():
     return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "TIMS")
 
 
+def _dir_is_writable(path):
+    """Best-effort check whether we can write to a folder on Windows."""
+    import tempfile
+    import os
+    try:
+        fd, tmp = tempfile.mkstemp(dir=path, prefix=".tims_wt_")
+        os.close(fd)
+        os.remove(tmp)
+        return True
+    except Exception:
+        return False
+
+
+def _repoint_shortcuts(old_exe, new_exe):
+    """Repoint any Desktop / Public Desktop / Start-Menu shortcuts that target
+    old_exe to new_exe (used when the app moves to the AppData folder)."""
+    import subprocess
+    ps = (
+        "$old=$args[0]; $new=$args[1]; "
+        "$ws=New-Object -ComObject WScript.Shell; "
+        "$dirs=@((Join-Path $env:USERPROFILE 'Desktop'),"
+        "(Join-Path $env:PUBLIC 'Desktop'),"
+        "(Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs')); "
+        "Get-ChildItem -Path $dirs -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | "
+        "ForEach-Object { try { $s=$ws.CreateShortcut($_.FullName); "
+        "if ($s.TargetPath -ieq $old) { $s.TargetPath=$new; $s.Save() } } catch {} }"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps, old_exe, new_exe],
+            capture_output=True, timeout=60,
+        )
+    except Exception:
+        pass
+
+
+def _build_update_bat(new_exe, target_exe, exe_name, child_pid, parent_pid, in_place):
+    """Build the detached batch that kills the app, installs the new exe, and
+    relaunches it (with an automatic launch retry). in_place=True replaces the
+    running exe in place; in_place=False launches the AppData copy already staged
+    by Python."""
+    L = [
+        "@echo off",
+        "chcp 65001 >nul",
+        'set "LOG=%LOCALAPPDATA%\\TIMS\\update.log"',
+        'echo [%date% %time%] update script started >> "%LOG%"',
+        # Kill any lingering instance by image name (also covers the
+        # "old app not killed in Task Manager" case).
+        f"taskkill /F /IM {exe_name} >nul 2>&1",
+        f"taskkill /F /PID {child_pid} >nul 2>&1",
+        f"taskkill /F /PID {parent_pid} >nul 2>&1",
+        "timeout /t 4 /nobreak >nul",
+        # Lift the "downloaded from internet" mark so Defender/SmartScreen don't
+        # fight the onefile temp extraction on relaunch.
+        f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{new_exe}\'" >nul 2>&1',
+    ]
+    if in_place:
+        L += [
+            "set /a R=0",
+            ":copy_loop",
+            f'copy /Y "{new_exe}" "{target_exe}" >nul 2>&1',
+            # Verify the new exe actually replaced the old one (sizes must match).
+            # `if exist` is NOT a reliable check — compare file sizes instead.
+            f'for %%A in ("{new_exe}") do set "NS=%%~zA"',
+            f'for %%A in ("{target_exe}") do set "ES=%%~zA"',
+            'if "%NS%"=="%ES%" if defined ES if not "%ES%"=="0" goto copied',
+            "set /a R+=1",
+            "if %R% LSS 10 ( timeout /t 1 /nobreak >nul & goto copy_loop )",
+            'echo [%date% %time%] WARNING in-place copy failed after %R% attempts >> "%LOG%"',
+            ":copied",
+            f'echo [%date% %time%] exe replaced in place >> "%LOG%"',
+            f'del "{new_exe}" >nul 2>&1',
+            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{target_exe}\'" >nul 2>&1',
+        ]
+    else:
+        # AppData install: the new exe was already staged at target_exe by Python.
+        L += [
+            f'echo [%date% %time%] installed to AppData "{target_exe}" >> "%LOG%"',
+            f'del "{new_exe}" >nul 2>&1',
+            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{target_exe}\'" >nul 2>&1',
+        ]
+    # Launch (with automatic retry if the app does not stay running).
+    L += [
+        "set /a LR=0",
+        ":launch_loop",
+        "timeout /t 2 /nobreak >nul",
+        f'start "" "{target_exe}"',
+        "timeout /t 8 /nobreak >nul",
+        f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /i "{exe_name}" >nul && goto launched',
+        "set /a LR+=1",
+        'echo [%date% %time%] launch retry %LR% >> "%LOG%"',
+        "if %LR% LSS 3 ( goto launch_loop )",
+        'echo [%date% %time%] WARNING app did not stay running after %LR% tries >> "%LOG%"',
+        ":launched",
+        'echo [%date% %time%] done >> "%LOG%"',
+        'del "%~f0" >nul 2>&1',
+    ]
+    return "\r\n".join(L) + "\r\n"
+
+
 def _run_update(flask_app, download_url, version=None):
-    """Download the new .exe (reporting progress), then spawn a detached batch
-    that kills this process (child + bootloader parent), replaces the .exe
-    in-place (verified by file size), and restarts it."""
+    """Download the new .exe (reporting progress), then install it and restart.
+    Replaces the exe in place when its folder is writable; otherwise installs to
+    the user's writable AppData TIMS folder and repoints shortcuts, so the new
+    version always takes effect (fixes updates that never applied)."""
     import urllib.request
     import tempfile
     import subprocess
+    import shutil
     import sys
     import os
     import time
@@ -6157,62 +6259,51 @@ def _run_update(flask_app, download_url, version=None):
         except Exception:
             pass
 
-        # 3. Build a robust batch script. Lives in the writable TIMS data dir
-        #    (not next to the exe, which may be in a read-only folder).
         child_pid = os.getpid()
         parent_pid = os.getppid()
         bat_path = os.path.join(data_dir, "update_tims.bat")
         exe_name = os.path.basename(exe_path)
-        script = (
-            "@echo off\r\n"
-            "chcp 65001 >nul\r\n"
-            'set "LOG=%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
-            'echo [%date% %time%] update script started >> "%LOG%"\r\n'
-            # Kill any lingering instance by image name (also covers the
-            # "old app not killed in Task Manager" case).
-            f'taskkill /F /IM {exe_name} >nul 2>&1\r\n'
-            f"taskkill /F /PID {child_pid} >nul 2>&1\r\n"
-            f"taskkill /F /PID {parent_pid} >nul 2>&1\r\n"
-            "timeout /t 4 /nobreak >nul\r\n"
-            # Lift the "downloaded from internet" mark so Defender/SmartScreen don't
-            # fight the onefile temp extraction on relaunch.
-            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{new_exe}\'" >nul 2>&1\r\n'
-            "set /a R=0\r\n"
-            ":copy_loop\r\n"
-            f'copy /Y "{new_exe}" "{exe_path}" >nul 2>&1\r\n'
-            # Verify the new exe actually replaced the old one (sizes must match).
-            # The old exe may exist even when the copy fails (still locked), so
-            # `if exist` is NOT a reliable check — compare file sizes instead.
-            f'for %%A in ("{new_exe}") do set "NS=%%~zA"\r\n'
-            f'for %%A in ("{exe_path}") do set "ES=%%~zA"\r\n'
-            'if "%NS%"=="%ES%" if defined ES if not "%ES%"=="0" goto copied\r\n'
-            "set /a R+=1\r\n"
-            "if %R% LSS 10 ( timeout /t 1 /nobreak >nul & goto copy_loop )\r\n"
-            'echo [%date% %time%] WARNING copy verification failed after %R% attempts >> "%LOG%"\r\n'
-            ":copied\r\n"
-            'echo [%date% %time%] exe replaced, launching >> "%LOG%"\r\n'
-            f'del "{new_exe}" >nul 2>&1\r\n'
-            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{exe_path}\'" >nul 2>&1\r\n'
-            "set /a LR=0\r\n"
-            ":launch_loop\r\n"
-            "timeout /t 2 /nobreak >nul\r\n"
-            f'start "" "{exe_path}"\r\n'
-            # Give the bootloader time to extract + start. If the process is gone
-            # again (e.g. Defender blocked the temp extraction), relaunch it.
-            "timeout /t 8 /nobreak >nul\r\n"
-            f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /i "{exe_name}" >nul && goto launched\r\n'
-            "set /a LR+=1\r\n"
-            'echo [%date% %time%] launch retry %LR% >> "%LOG%"\r\n'
-            "if %LR% LSS 3 ( goto launch_loop )\r\n"
-            'echo [%date% %time%] WARNING app did not stay running after %LR% tries >> "%LOG%"\r\n'
-            ":launched\r\n"
-            'echo [%date% %time%] done >> "%LOG%"\r\n'
-            'del "%~f0" >nul 2>&1\r\n'
+
+        # 3. Decide the install strategy.
+        #    If the current exe folder is writable we replace the exe in place
+        #    (keeps the user's existing install/shortcut). Otherwise the exe is
+        #    installed into the writable AppData TIMS folder and Desktop/Start-Menu
+        #    shortcuts are repointed there, so the new version ALWAYS takes effect
+        #    even when the original install folder is read-only (e.g. Program Files).
+        appdata_exe = os.path.join(data_dir, "EC_Tools.exe")
+        in_place = _dir_is_writable(os.path.dirname(exe_path) or ".")
+        target_exe = exe_path if in_place else appdata_exe
+
+        if not in_place:
+            # Copy the new exe to the writable AppData location now (this target is
+            # not the running exe, so the copy cannot be blocked by a file lock),
+            # unblock it, and repoint any shortcuts that used to launch the old exe.
+            try:
+                shutil.copyfile(new_exe, appdata_exe)
+            except Exception as e:
+                flask_app.logger.error("AppData install failed: %s", e)
+                _update_progress.update(status="error", message="Could not install the update to your user folder.")
+                return
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"Unblock-File -LiteralPath '{appdata_exe}'"],
+                    capture_output=True, timeout=30,
+                )
+            except Exception:
+                pass
+            _repoint_shortcuts(exe_path, appdata_exe)
+
+        # 4. Build a robust batch script. Lives in the writable TIMS data dir
+        #    (not next to the exe, which may be in a read-only folder).
+        script = _build_update_bat(
+            new_exe=new_exe, target_exe=target_exe, exe_name=exe_name,
+            child_pid=child_pid, parent_pid=parent_pid, in_place=in_place,
         )
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write(script)
 
-        # 4. Launch the script detached so the response can reach the frontend first.
+        # 5. Launch the script detached so the response can reach the frontend first.
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         subprocess.Popen(
