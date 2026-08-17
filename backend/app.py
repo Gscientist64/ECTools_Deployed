@@ -167,22 +167,6 @@ def create_app():
     return app
 
 
-def _open_browser_when_ready(url: str, tries: int = 25, delay: float = 0.2):
-    """Optional: open the browser after the server starts (useful for .exe with no console)."""
-    import socket
-    host, port = "127.0.0.1", 5000
-    for _ in range(tries):
-        s = socket.socket()
-        try:
-            s.settimeout(0.2)
-            s.connect((host, port))
-            s.close()
-            webbrowser.open(url)
-            return
-        except Exception:
-            time.sleep(delay)
-
-
 if __name__ == "__main__":
     import socket
     import threading
@@ -198,28 +182,6 @@ if __name__ == "__main__":
         except Exception:
             pass  # non-Windows or ctypes unavailable
 
-    def _find_free_port(start=5000, tries=10):
-        for port in range(start, start + tries):
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    s.bind(("127.0.0.1", port))
-                    return port
-            except OSError:
-                continue
-        return None
-
-    PORT = _find_free_port(5000)
-    if PORT is None:
-        _msgbox(
-            "EC Tools — Cannot Start",
-            "All ports 5000-5009 are in use.\n\n"
-            "Close other applications and try again."
-        )
-        sys.exit(1)
-
-    URL = f"http://127.0.0.1:{PORT}"
-
     try:
         app = create_app()
     except Exception as exc:
@@ -230,7 +192,25 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
+    # Bind to ANY free local port (let the OS pick one) so the app never fails
+    # because another service is already using port 5000/5001/… — the frontend
+    # uses relative API URLs, so it works on whatever port waitress binds.
+    from waitress.server import create_server
+    try:
+        server = create_server(app, host="127.0.0.1", port=0, threads=12)
+        PORT = int(getattr(server, "effective_port", 0) or 0)
+    except Exception as exc:
+        _msgbox("EC Tools — Cannot Start", f"Could not start the local server:\n\n{exc}")
+        sys.exit(1)
+
+    if not PORT:
+        _msgbox("EC Tools — Cannot Start", "Could not reserve a local port for the application.")
+        sys.exit(1)
+
+    URL = f"http://127.0.0.1:{PORT}"
+
     def _open_when_ready():
+        time.sleep(1.0)  # give waitress a moment to start accepting requests
         for _ in range(60):
             try:
                 with socket.create_connection(("127.0.0.1", PORT), timeout=0.3):
@@ -241,9 +221,8 @@ if __name__ == "__main__":
 
     threading.Thread(target=_open_when_ready, daemon=True).start()
 
-    from waitress import serve
     try:
-        serve(app, host="127.0.0.1", port=PORT, threads=12)
+        server.run()
     except Exception as exc:
         _msgbox("EC Tools — Server Error", str(exc))
         sys.exit(1)

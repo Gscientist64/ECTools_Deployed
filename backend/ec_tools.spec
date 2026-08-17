@@ -109,11 +109,13 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-packed exes are frequently flagged by antivirus; keep UPX off.
+    upx=False,
     upx_exclude=[],
     console=False,          # no CMD window — errors shown via MessageBox
     icon=icon_file if os.path.isfile(icon_file) else None,
     onefile=True,
     uac_admin=False,        # does not need admin rights
-    version_file=None,
+    # NOTE: the version/publisher resource is stamped AFTER the build via
+    # `python stamp_version.py` (the in-spec version_file hook is unreliable).
 )
