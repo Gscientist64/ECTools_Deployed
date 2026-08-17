@@ -6129,6 +6129,18 @@ def _run_update(flask_app, download_url, version=None):
         if total and downloaded != total:
             raise RuntimeError(f"Download incomplete ({downloaded}/{total} bytes)")
 
+        # Strip any "downloaded from internet" mark (MOTW) so Windows Defender /
+        # SmartScreen treat the new exe as a local file. This avoids the onefile
+        # temp-extraction interference that can cause "Failed to load Python DLL".
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"Unblock-File -LiteralPath '{new_exe}'"],
+                capture_output=True, timeout=30,
+            )
+        except Exception:
+            pass
+
         _update_progress.update(percent=99, status="installing", message="Installing update…")
 
         data_dir = _tims_data_dir()
@@ -6150,14 +6162,21 @@ def _run_update(flask_app, download_url, version=None):
         child_pid = os.getpid()
         parent_pid = os.getppid()
         bat_path = os.path.join(data_dir, "update_tims.bat")
+        exe_name = os.path.basename(exe_path)
         script = (
             "@echo off\r\n"
             "chcp 65001 >nul\r\n"
             'set "LOG=%LOCALAPPDATA%\\TIMS\\update.log"\r\n'
             'echo [%date% %time%] update script started >> "%LOG%"\r\n'
+            # Kill any lingering instance by image name (also covers the
+            # "old app not killed in Task Manager" case).
+            f'taskkill /F /IM {exe_name} >nul 2>&1\r\n'
             f"taskkill /F /PID {child_pid} >nul 2>&1\r\n"
             f"taskkill /F /PID {parent_pid} >nul 2>&1\r\n"
-            "timeout /t 3 /nobreak >nul\r\n"
+            "timeout /t 4 /nobreak >nul\r\n"
+            # Lift the "downloaded from internet" mark so Defender/SmartScreen don't
+            # fight the onefile temp extraction on relaunch.
+            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{new_exe}\'" >nul 2>&1\r\n'
             "set /a R=0\r\n"
             ":copy_loop\r\n"
             f'copy /Y "{new_exe}" "{exe_path}" >nul 2>&1\r\n'
@@ -6171,9 +6190,22 @@ def _run_update(flask_app, download_url, version=None):
             "if %R% LSS 10 ( timeout /t 1 /nobreak >nul & goto copy_loop )\r\n"
             'echo [%date% %time%] WARNING copy verification failed after %R% attempts >> "%LOG%"\r\n'
             ":copied\r\n"
-            'echo [%date% %time%] exe replaced, restarting >> "%LOG%"\r\n'
+            'echo [%date% %time%] exe replaced, launching >> "%LOG%"\r\n'
             f'del "{new_exe}" >nul 2>&1\r\n'
+            f'powershell -NoProfile -Command "Unblock-File -LiteralPath \'{exe_path}\'" >nul 2>&1\r\n'
+            "set /a LR=0\r\n"
+            ":launch_loop\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
             f'start "" "{exe_path}"\r\n'
+            # Give the bootloader time to extract + start. If the process is gone
+            # again (e.g. Defender blocked the temp extraction), relaunch it.
+            "timeout /t 8 /nobreak >nul\r\n"
+            f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /i "{exe_name}" >nul && goto launched\r\n'
+            "set /a LR+=1\r\n"
+            'echo [%date% %time%] launch retry %LR% >> "%LOG%"\r\n'
+            "if %LR% LSS 3 ( goto launch_loop )\r\n"
+            'echo [%date% %time%] WARNING app did not stay running after %LR% tries >> "%LOG%"\r\n'
+            ":launched\r\n"
             'echo [%date% %time%] done >> "%LOG%"\r\n'
             'del "%~f0" >nul 2>&1\r\n'
         )
