@@ -6512,6 +6512,44 @@ def _supervisor_confirm_page(req_id, facility, requester_name, role_label, actio
 </div></body></html>"""
 
 
+def _request_still_awaits_reviewer(request_obj, role):
+    """Return True if `request_obj` is still at the stage where this reviewer's
+    decision is required (so a token consumed prematurely should be restored)."""
+    if not request_obj:
+        return False
+    st = (request_obj.status or "").strip().lower()
+    if role == "facility_supervisor":
+        return st == "pending supervisor review"
+    if role == "si_management":
+        return st == "pending s.i review"
+    return False
+
+
+def _request_status_description(request_obj):
+    """Human-friendly summary of a request's current status (for the
+    'already processed' page)."""
+    st = (request_obj.status or "").strip().lower()
+    when = ""
+    if request_obj.date_rejected:
+        try:
+            when = f" on {request_obj.date_rejected.strftime('%Y-%m-%d at %H:%M')}"
+        except Exception:
+            when = ""
+    if st == "rejected":
+        return f"It was rejected{when}."
+    if st == "approved":
+        return "It has been fully approved and is being processed."
+    if st == "delivered":
+        return "It has been approved and delivered."
+    if st == "pending s.i review":
+        return "It has been approved by the facility supervisor and is now awaiting S.I. Management review."
+    if st == "pending":
+        return "It is currently pending final approval by the administrator."
+    if st == "pending supervisor review":
+        return "It is currently awaiting facility supervisor review."
+    return f"Its current status is '{request_obj.status}'."
+
+
 @api_bp.route("/supervisor/action", methods=["GET", "POST"])
 def supervisor_email_action():
     from mailer import _verify_action_token, _make_action_token, notify_si_management_of_request, _esc
@@ -6536,12 +6574,39 @@ def supervisor_email_action():
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     sa = SupervisorAction.query.filter_by(token_hash=token_hash).first()
-    if not sa or sa.action != "pending":
-        return _supervisor_page("Link Already Used", "This approve/reject link has already been processed."), 400
 
     request_obj = RequestModel.query.get(req_id)
     if not request_obj:
         return _supervisor_page("Request Not Found", "The request associated with this link no longer exists."), 404
+
+    if sa is None:
+        # The signature verified (the link is authentic) but there is no recorded
+        # review row for it (e.g. the email predates the DB row, or a newer email
+        # superseded it). Tell the reviewer how to proceed instead of a dead-end.
+        return _supervisor_page(
+            "Link Not Found",
+            "This link could not be matched to a review for this request. It may have been "
+            "replaced by a newer email. Please use the most recent email you received for "
+            "this request, or contact the TIMS administrator for help."
+        ), 200
+
+    if sa.action != "pending":
+        # The token was already consumed. If the request is STILL waiting on this
+        # reviewer, the action never actually took effect (e.g. a duplicate submit,
+        # a browser retry, or an email link-checker during a slow server wake-up),
+        # so restore the token and let the reviewer complete their action. Otherwise
+        # the request genuinely moved on - show a clear status instead of the
+        # confusing "link already used" dead-end.
+        if _request_still_awaits_reviewer(request_obj, role):
+            sa.action = "pending"
+            sa.created_at = datetime.utcnow()
+            db.session.commit()
+        else:
+            detail = _request_status_description(request_obj)
+            return _supervisor_page(
+                "Already Processed",
+                f"This request has already been processed. {detail} No further action is needed from this link."
+            ), 200
 
     requester = Users.query.get(request_obj.user_id)
     facility_name = requester.facility if requester else "Unknown Facility"
