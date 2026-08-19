@@ -242,11 +242,45 @@ def _available_stock(facility_name, tool_id, source="facility"):
         return None
 
 
+def _last_supplied_dates(facility_name, tool_ids):
+    """Return {tool_id: 'YYYY-MM-DD'} for the most recent delivered item to this
+    facility, so emails can show a 'Last Supplied Date' per tool."""
+    result = {}
+    if not facility_name or not tool_ids:
+        return result
+    from models import Delivery, Users
+    from sqlalchemy import func as _func
+    rows = (
+        Delivery.query
+        .join(Users, Delivery.received_by == Users.id)
+        .filter(
+            Users.facility == facility_name,
+            Delivery.tool_id.in_(list(tool_ids)),
+            Delivery.is_delivered.is_(True),
+        )
+        .order_by(_func.coalesce(Delivery.delivery_date, Delivery.delivery_confirmed_at).desc())
+        .all()
+    )
+    seen = set()
+    for d in rows:
+        if d.tool_id in seen:
+            continue
+        seen.add(d.tool_id)
+        dt = d.delivery_date or d.delivery_confirmed_at
+        result[d.tool_id] = dt.strftime("%Y-%m-%d") if dt else None
+    return result
+
+
 def _render_tools_table(tools_list, facility_name=None, show_stock=True, stock_source="facility"):
     """Render a modern table of requested tools with an Available Stock column.
     stock_source='facility' shows the facility's stock; 'state' shows central state stock.
     If a tool dict carries a 'utilization' dict, a utilization line is shown under its name."""
     stock_col = '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Available</th>' if show_stock else ""
+    last_col = '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Last Supplied Date</th>'
+    last_map = (
+        _last_supplied_dates(facility_name, [t.get("tool_id") for t in tools_list if t.get("tool_id")])
+        if facility_name else {}
+    )
     rows = []
     for t in tools_list:
         name = _esc(t.get("name", "Unknown"))
@@ -256,6 +290,8 @@ def _render_tools_table(tools_list, facility_name=None, show_stock=True, stock_s
             st = _available_stock(facility_name, t.get("tool_id"), source=stock_source)
             stock = (str(st) if st is not None else "&mdash;")
         stock_td = f'<td style="padding:12px 16px;text-align:center;color:#64748b;font-size:14px;">{stock}</td>' if show_stock else ""
+        last_val = last_map.get(t.get("tool_id"))
+        last_td = f'<td style="padding:12px 16px;text-align:center;color:#64748b;font-size:13px;white-space:nowrap;">{_esc(last_val) if last_val else "&mdash;"}</td>'
 
         name_cell = name
         util = t.get("utilization")
@@ -284,6 +320,7 @@ def _render_tools_table(tools_list, facility_name=None, show_stock=True, stock_s
             f'<td style="padding:12px 16px;color:#334155;font-size:14px;">{name_cell}</td>'
             f'<td style="padding:12px 16px;text-align:center;color:#334155;font-size:14px;font-weight:600;">{qty}</td>'
             f"{stock_td}"
+            f"{last_td}"
             "</tr>"
         )
     return (
@@ -292,6 +329,7 @@ def _render_tools_table(tools_list, facility_name=None, show_stock=True, stock_s
         '<th style="padding:12px 16px;text-align:left;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Tool / Item</th>'
         '<th style="padding:12px 16px;text-align:center;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Requested</th>'
         f"{stock_col}"
+        f"{last_col}"
         '</tr></thead><tbody>'
         f"{''.join(rows)}"
         '</tbody></table>'
