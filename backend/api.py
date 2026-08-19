@@ -6550,6 +6550,28 @@ def _request_status_description(request_obj):
     return f"Its current status is '{request_obj.status}'."
 
 
+# Shown to facility supervisors when old app versions are being phased out.
+SUPERVISOR_UPDATE_REQUIRED_MSG = (
+    "Your facility is using an outdated version of the app. Please update to the "
+    "current version before making any request. If you are having difficulties "
+    "upgrading, please reach out to the HiFRAVL Team."
+)
+
+
+def _facility_supervisor_approval_blocked():
+    """True when facility-supervisor approvals are temporarily blocked.
+
+    Server-side enforcement that needs NO desktop release: supervisors click email
+    links that point to this (Render) server, so the gate runs centrally. Admins
+    toggle it with the 'supervisor_approval_blocked' SystemSetting — '1'/'true'
+    or missing = blocked, '0'/'false' = allowed.
+    """
+    s = SystemSetting.query.filter_by(key="supervisor_approval_blocked").first()
+    if s is None:
+        return True  # default blocked until version-based enforcement ships
+    return (s.value or "").strip().lower() in ("1", "true", "yes")
+
+
 @api_bp.route("/supervisor/action", methods=["GET", "POST"])
 def supervisor_email_action():
     from mailer import _verify_action_token, _make_action_token, notify_si_management_of_request, _esc
@@ -6571,6 +6593,12 @@ def supervisor_email_action():
     if result[0] is None:
         return _supervisor_page("Invalid or Expired Link", _esc(result[1])), 400
     req_id, email, role, action = result
+
+    # Temporary server-side enforcement (no desktop release needed): block
+    # facility-supervisor approvals while old app versions are being phased out.
+    # This gate runs centrally on Render because the email action links point here.
+    if role == "facility_supervisor" and _facility_supervisor_approval_blocked():
+        return _supervisor_page("Update Required", SUPERVISOR_UPDATE_REQUIRED_MSG), 403
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     sa = SupervisorAction.query.filter_by(token_hash=token_hash).first()
@@ -6824,6 +6852,28 @@ def update_si_management_settings():
         db.session.add(SystemSetting(key="si_management_email", value=primary_email))
     db.session.commit()
     return jsonify({"message": "S.I Management updated", "entries": entries}), 200
+
+
+@api_bp.route("/admin/settings/supervisor-approval", methods=["GET"])
+@login_required
+def get_supervisor_approval_setting():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    return jsonify({"blocked": _facility_supervisor_approval_blocked()}), 200
+
+
+@api_bp.route("/admin/settings/supervisor-approval", methods=["PUT"])
+@login_required
+def update_supervisor_approval_setting():
+    if not _is_admin_user(current_user): return _admin_required_json()
+    data = _json_body()
+    blocked = bool(data.get("blocked", True))
+    setting = SystemSetting.query.filter_by(key="supervisor_approval_blocked").first()
+    if setting:
+        setting.value = "1" if blocked else "0"
+    else:
+        db.session.add(SystemSetting(key="supervisor_approval_blocked", value="1" if blocked else "0"))
+    db.session.commit()
+    return jsonify({"blocked": _facility_supervisor_approval_blocked()}), 200
 
 
 # ---------------------------------------------------------------------------
