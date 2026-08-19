@@ -2632,6 +2632,14 @@ def admin_resend_supervisor_email(req_id):
     }), 200 if all_ok else 207
 
 
+def _approval_qty(ln):
+    """Quantity that should actually be approved/dispatched for a line: the
+    S.I.-approved quantity when the S.I. adjusted it, otherwise the requested
+    quantity. This is what the admin approval, batch approval and the delivery
+    confirmation all honor."""
+    return int(ln.approved_quantity if ln.approved_quantity is not None else (ln.quantity or 0))
+
+
 @api_bp.route("/admin/requests/<int:req_id>/approve", methods=["POST"])
 @login_required
 def admin_approve_request(req_id):
@@ -2658,7 +2666,7 @@ def admin_approve_request(req_id):
         if not tool:
             continue
 
-        need = int(ln.quantity or 0)
+        need = _approval_qty(ln)
         if need <= 0:
             continue
 
@@ -2700,7 +2708,7 @@ def admin_approve_request(req_id):
             request_id=r.id,
             tool_id=ln.tool_id,
             requested_tool_id=ln.id,
-            quantity_supplied=int(ln.quantity or 0),
+            quantity_supplied=_approval_qty(ln),
             basic_unit="unit",
             distributed_by=current_user.id,
             received_by=r.user_id,
@@ -2959,8 +2967,9 @@ def confirm_request_delivery(request_id):
     facility = current_user.facility or ""
     delivery_ids = []
     for line in approved_lines:
-        # Use actual received qty if supplied, fall back to approved qty
-        approved_qty = int(line.quantity or 0)
+        # Use actual received qty if supplied, fall back to the S.I.-approved qty
+        # (or requested qty if the S.I. never adjusted it).
+        approved_qty = _approval_qty(line)
         raw = actual_quantities.get(str(line.id))
         qty = max(0, int(raw)) if raw is not None else approved_qty
 
@@ -4437,18 +4446,22 @@ def batch_approve_requests():
             r.approved_by_id = current_user.id
 
         for ln in (r.requested_tools or []):
-            if (ln.status or "").lower() == "pending":
-                ln.status = "Approved"
-                if ln.tool:
-                    ln.tool.quantity = max(0, (ln.tool.quantity or 0) - int(ln.quantity or 0))
-                if not Delivery.query.filter_by(requested_tool_id=ln.id).first():
-                    d = Delivery(
-                        request_id=r.id, tool_id=ln.tool_id, requested_tool_id=ln.id,
-                        quantity_supplied=int(ln.quantity or 0), basic_unit="unit",
-                        distributed_by=current_user.id, received_by=r.user_id,
-                        witnessed_by="", delivery_date=now, is_delivered=False,
-                    )
-                    db.session.add(d)
+            if (ln.status or "").lower() != "pending":
+                continue
+            need = _approval_qty(ln)
+            if need <= 0:
+                continue
+            ln.status = "Approved"
+            if ln.tool:
+                ln.tool.quantity = max(0, (ln.tool.quantity or 0) - need)
+            if not Delivery.query.filter_by(requested_tool_id=ln.id).first():
+                d = Delivery(
+                    request_id=r.id, tool_id=ln.tool_id, requested_tool_id=ln.id,
+                    quantity_supplied=need, basic_unit="unit",
+                    distributed_by=current_user.id, received_by=r.user_id,
+                    witnessed_by="", delivery_date=now, is_delivered=False,
+                )
+                db.session.add(d)
 
         _audit("batch_approve_request", "request", r.id)
         approved.append(req_id)
