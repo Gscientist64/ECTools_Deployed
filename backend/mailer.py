@@ -243,31 +243,40 @@ def _available_stock(facility_name, tool_id, source="facility"):
 
 
 def _last_supplied_dates(facility_name, tool_ids):
-    """Return {tool_id: 'YYYY-MM-DD'} for the most recent delivered item to this
-    facility, so emails can show a 'Last Supplied Date' per tool."""
+    """Return {tool_id: 'YYYY-MM-DD'} for the last date the admin approved a
+    request supplying that tool to this facility. Uses Request.date_approved
+    (NOT the facility's delivery confirmation), because facilities often forget
+    to confirm deliveries."""
     result = {}
     if not facility_name or not tool_ids:
         return result
-    from models import Delivery, Users
+    from models import Delivery, Users, Request as RequestModel
     from sqlalchemy import func as _func
     rows = (
-        Delivery.query
+        db.session.query(
+            Delivery.tool_id,
+            RequestModel.date_approved,
+            Delivery.delivery_date,
+            Delivery.delivery_confirmed_at,
+        )
+        .join(RequestModel, RequestModel.id == Delivery.request_id)
         .join(Users, Delivery.received_by == Users.id)
         .filter(
             Users.facility == facility_name,
             Delivery.tool_id.in_(list(tool_ids)),
-            Delivery.is_delivered.is_(True),
         )
-        .order_by(_func.coalesce(Delivery.delivery_date, Delivery.delivery_confirmed_at).desc())
+        .order_by(
+            _func.coalesce(RequestModel.date_approved, Delivery.delivery_date, Delivery.delivery_confirmed_at).desc()
+        )
         .all()
     )
     seen = set()
-    for d in rows:
-        if d.tool_id in seen:
+    for tool_id, date_approved, delivery_date, confirmed_at in rows:
+        if tool_id in seen:
             continue
-        seen.add(d.tool_id)
-        dt = d.delivery_date or d.delivery_confirmed_at
-        result[d.tool_id] = dt.strftime("%Y-%m-%d") if dt else None
+        seen.add(tool_id)
+        dt = date_approved or delivery_date or confirmed_at
+        result[tool_id] = dt.strftime("%Y-%m-%d") if dt else None
     return result
 
 
